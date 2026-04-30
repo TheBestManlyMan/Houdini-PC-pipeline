@@ -1,0 +1,16 @@
+# Local config — machine-specific, not committed
+projects.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Houdini
+*.hdalibrary/
+*.hipnc
+*.hip.bak
+
+# OS
+.DS_Store
+Thumbs.db

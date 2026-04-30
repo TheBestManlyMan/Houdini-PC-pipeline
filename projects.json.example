@@ -1,0 +1,15 @@
+{
+  "projects": [
+    {
+      "name": "My Project",
+      "folder": "my-project",
+      "fps": 24,
+      "resolution": "1920x1080",
+      "sequences": ["SQ010", "SQ020"],
+      "assets": {
+        "character": ["hero"],
+        "environment": ["forest"]
+      }
+    }
+  ]
+}

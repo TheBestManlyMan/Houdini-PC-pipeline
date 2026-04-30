@@ -1,0 +1,6 @@
+{
+  "projects_root": "/home/maxborg/projects/shows",
+  "ffmpeg": "ffmpeg",
+  "default_fps": 24,
+  "default_resolution": "1920x1080"
+}
