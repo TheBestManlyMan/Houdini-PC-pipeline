@@ -4,12 +4,10 @@
 
 A personal Houdini FX pipeline for managing projects, versioning hip files, writing caches, and publishing outputs. No ShotGrid, no render farm — disk + JSON only.
 
-Launched from: `/home/maxborg/projects/Houdini-PC-Pipeline/`
-
 ## Repo structure
 
 ```
-Houdini-PC-Pipeline/
+Houdini-PC-pipeline/
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
@@ -18,14 +16,56 @@ Houdini-PC-Pipeline/
     pipeline.py              # Core utility — ALL shared logic lives here
     file_manager.py          # PySide6 File Manager dialog
   houdini/
-    otls/                    # Compiled HDAs
-    toolbar/                 # Shelf files
+    tool_scripts/            # Shelf tool button scripts
   docs/
     pipeline_api.md          # pipeline.py function reference
   tests/
     test_pipeline.py         # Unit tests for pipeline.py
   .gitignore
 ```
+
+## Workflow — collaborating with Claude
+
+**Local machine:** `/home/maxborg/projects/Houdini-PC-pipeline/` (Linux Pop_OS!)
+**GitHub repo:** `https://github.com/TheBestManlyMan/Houdini-PC-pipeline`
+
+### Direction 1 — Claude makes changes, you pull them down
+
+1. Describe the task in chat.
+2. Claude edits files, commits, and pushes to a task branch on GitHub
+   (e.g. `claude/some-description`).
+3. On your machine, pull the branch and merge into main:
+
+   ```
+   git fetch origin
+   git checkout main
+   git merge origin/<branch-name>
+   git push origin main            # sync main back to GitHub
+   ```
+
+4. Delete the Claude branch when done (optional):
+
+   ```
+   git branch -d <branch-name>
+   git push origin --delete <branch-name>
+   ```
+
+### Direction 2 — You make changes locally, push to GitHub
+
+1. Edit files on your machine as normal.
+2. Commit and push to main (or your own branch):
+
+   ```
+   git add <files>
+   git commit -m "your message"
+   git push origin main
+   ```
+
+3. Next Claude session will automatically see your latest changes.
+
+### merge vs squash
+- `git merge <branch>` — keeps the full commit history from the Claude branch.
+- `git merge --squash <branch> && git commit -m "..."` — collapses it into one clean commit on main.
 
 ## Rules — read before writing any code
 
@@ -93,7 +133,7 @@ Houdini-PC-Pipeline/
 
 In `~/houdini21.0/houdini.env`:
 ```
-HOUDINI_PIPELINE_ROOT = /home/maxborg/projects/Houdini-PC-Pipeline
+HOUDINI_PIPELINE_ROOT = /home/maxborg/projects/Houdini-PC-pipeline
 PYTHONPATH = $HOUDINI_PIPELINE_ROOT/python;&
 HOUDINI_PATH = $HOUDINI_PIPELINE_ROOT/houdini;&
 ```
