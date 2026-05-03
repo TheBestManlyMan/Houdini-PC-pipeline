@@ -5,9 +5,12 @@ UI scripts call these functions; they never build paths themselves.
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
+
+logger = logging.getLogger("pipeline")
 
 # ---------------------------------------------------------------------------
 # Config
@@ -50,6 +53,20 @@ def save_projects(projects: list[dict]) -> None:
         json.dump({"projects": projects}, f, indent=2)
 
 
+def add_sequence(project_folder: str, seq: str) -> None:
+    projects = load_projects()
+    for p in projects:
+        if p["folder"] == project_folder:
+            if seq in p.get("sequences", []):
+                raise ValueError(f"Sequence '{seq}' already exists in project.")
+            p.setdefault("sequences", []).append(seq)
+            p["sequences"].sort()
+            save_projects(projects)
+            logger.info("Sequence added: %s/%s", project_folder, seq)
+            return
+    raise ValueError(f"Project folder '{project_folder}' not found in registry.")
+
+
 def add_project(name: str, folder: str, fps: int = None, resolution: str = None,
                 sequences: list[str] = None, assets: dict = None) -> dict:
     cfg = load_config()
@@ -66,6 +83,7 @@ def add_project(name: str, folder: str, fps: int = None, resolution: str = None,
         raise ValueError(f"Project folder '{folder}' already exists in registry.")
     projects.append(project)
     save_projects(projects)
+    logger.info("Project created: %s  →  %s", name, projects_root() / folder)
     return project
 
 
@@ -74,11 +92,11 @@ def add_project(name: str, folder: str, fps: int = None, resolution: str = None,
 # ---------------------------------------------------------------------------
 
 def shot_fx_root(project_folder: str, seq: str, shot: str) -> Path:
-    return projects_root() / project_folder / "sequences" / seq / shot / "FX"
+    return projects_root() / project_folder / seq / shot / "FX"
 
 
 def shot_work_houdini(project_folder: str, seq: str, shot: str) -> Path:
-    return shot_fx_root(project_folder, seq, shot) / "work" / "houdini"
+    return projects_root() / project_folder / seq / shot / "houdini"
 
 
 def shot_cache_root(project_folder: str, seq: str, shot: str, task: str) -> Path:
@@ -190,11 +208,15 @@ def mp4_filename(entity: str, task: str, version: int) -> str:
 # ---------------------------------------------------------------------------
 
 def make_shot_work_dirs(project_folder: str, seq: str, shot: str) -> None:
-    shot_work_houdini(project_folder, seq, shot).mkdir(parents=True, exist_ok=True)
+    path = shot_work_houdini(project_folder, seq, shot)
+    path.mkdir(parents=True, exist_ok=True)
+    logger.info("Shot dirs created: %s", path)
 
 
 def make_asset_work_dirs(project_folder: str, asset_type: str, asset: str) -> None:
-    asset_work_houdini(project_folder, asset_type, asset).mkdir(parents=True, exist_ok=True)
+    path = asset_work_houdini(project_folder, asset_type, asset)
+    path.mkdir(parents=True, exist_ok=True)
+    logger.info("Asset dirs created: %s", path)
 
 
 def make_cache_version_dirs(cache_root: Path, version: int) -> dict[str, Path]:
@@ -236,6 +258,20 @@ def next_hip_path(work_houdini: Path, entity: str, task: str) -> Path:
     versions = [e["version"] for e in existing if e]
     next_ver = (max(versions) + 1) if versions else 1
     return work_houdini / hip_filename(entity, task, next_ver)
+
+
+# ---------------------------------------------------------------------------
+# Hip version preparation
+# ---------------------------------------------------------------------------
+
+def prepare_hip_version_dir(project_folder: str, seq: str, shot: str,
+                             entity: str, task: str) -> Path:
+    """Return the next versioned .hip path and ensure its parent directory exists."""
+    work = shot_work_houdini(project_folder, seq, shot)
+    path = next_hip_path(work, entity, task)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Hip version ready: %s", path)
+    return path
 
 
 # ---------------------------------------------------------------------------

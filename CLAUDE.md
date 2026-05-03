@@ -76,7 +76,7 @@ Houdini-PC-pipeline/
 3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. `pipeline.py` loads config relative to its own location — no absolute paths in code.
 
 4. **Both contexts always.** Every function touching paths must handle:
-   - Shot: `{projects_root}/{project}/sequences/{SEQ}/{SHOT}/FX/`
+   - Shot: `{projects_root}/{project}/{SEQ}/{SHOT}/`
    - Asset: `{projects_root}/{project}/assets/{ASSET_TYPE}/{ASSET}/FX/`
 
 5. **Versioning from disk only.** Scan the folder. Never track version numbers in config or state. `get_next_version()` is the single source of truth.
@@ -111,8 +111,8 @@ Houdini-PC-pipeline/
 
 **Shot:**
 ```
-{projects_root}/{project}/sequences/{SEQ}/{SHOT}/FX/
-  work/houdini/
+{projects_root}/{project}/{SEQ}/{SHOT}/
+  houdini/
     {shot}_fx_{task}_v001.hip
     cache/{task}/geo/v001/
     cache/{task}/vdb/v001/
@@ -137,3 +137,16 @@ HOUDINI_PIPELINE_ROOT = /home/maxborg/projects/Houdini-PC-pipeline
 PYTHONPATH = $HOUDINI_PIPELINE_ROOT/python;&
 HOUDINI_PATH = $HOUDINI_PIPELINE_ROOT/houdini;&
 ```
+
+## Houdini API Reference
+
+See `houdini_api_notes.md` for verified method signatures and gotchas.
+Always check this file before writing any `hou.*` call.
+
+## Houdini API — Self-Correction Rule
+
+When any `hou.*` call fails with AttributeError or TypeError:
+1. Fix the code.
+2. Immediately append the correction to `houdini_api_notes.md` under "What Does NOT Exist":
+   Format: `| hou.wrong() | hou.correct() | brief reason |`
+3. Do this before moving on — no exceptions.

@@ -16,7 +16,11 @@ _pipeline_python = os.path.join(_root, "python")
 if _pipeline_python not in sys.path:
     sys.path.insert(0, _pipeline_python)
 
+import pipeline
+import naming_conventions
 import file_manager
 
+importlib.reload(pipeline)
+importlib.reload(naming_conventions)
 importlib.reload(file_manager)
 file_manager.main()
