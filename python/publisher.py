@@ -151,7 +151,7 @@ def _parse_publisher_context() -> dict:
 
     entity = parsed["entity"]
     task = parsed["task"]
-    descriptor = parsed["descriptor"]
+    descriptor = parsed.get("descriptor", "")
     hip_version = parsed["version"]
 
     entity_root = pipeline.entity_root_from_hip(hip_path)
