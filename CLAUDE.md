@@ -111,13 +111,14 @@ Houdini-PC-pipeline/
 
 **Shot:**
 ```
-{projects_root}/{project}/{SEQ}/{SHOT}/
-  houdini/
+{projects_root}/{project}/{SEQ}/{SHOT}/FX/
+  work/houdini/
     {shot}_fx_{task}_v001.hip
     cache/{task}/geo/v001/
     cache/{task}/vdb/v001/
   publish/render/{task}/v001/
   publish/{fmt}/{task}/v001/
+  preview/{task}/...
 ```
 
 **Asset:**

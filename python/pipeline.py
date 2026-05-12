@@ -99,7 +99,7 @@ def shot_fx_root(project_folder: str, seq: str, shot: str) -> Path:
 
 
 def shot_work_houdini(project_folder: str, seq: str, shot: str) -> Path:
-    return projects_root() / project_folder / seq / shot / "houdini"
+    return shot_fx_root(project_folder, seq, shot) / "work" / "houdini"
 
 
 def shot_cache_root(project_folder: str, seq: str, shot: str, task: str) -> Path:
@@ -334,10 +334,9 @@ def build_ffmpeg_cmd(image_seq_path: str, output_mp4: str, fps: int = None) -> l
 def entity_root_from_hip(hip_path) -> Path:
     hip_path = Path(hip_path)
     parent = hip_path.parent
-    # Asset hip: {root}/work/houdini/{hip} → root = parent.parent.parent
+    # Both shot and asset hips live at .../FX/work/houdini/{hip} → entity root is FX/
     if parent.name == "houdini" and parent.parent.name == "work":
         return parent.parent.parent
-    # Shot hip: {root}/houdini/{hip} → root = parent.parent
     return parent.parent
 
 

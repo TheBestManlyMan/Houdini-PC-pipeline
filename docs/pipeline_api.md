@@ -35,7 +35,7 @@ Overwrite `projects.json` with the given list.
 All return `Path` objects. Never call these from UI files directly — use the result via pipeline functions.
 
 ### `shot_fx_root(project_folder, seq, shot) -> Path`
-`{projects_root}/{project}/sequences/{SEQ}/{SHOT}/FX/`
+`{projects_root}/{project}/{SEQ}/{SHOT}/FX/`
 
 ### `shot_work_houdini(project_folder, seq, shot) -> Path`
 `…/FX/work/houdini/`
@@ -147,7 +147,7 @@ Build the ffmpeg command list for an image sequence → MP4 encode. Uses config 
 ## Publisher — path builders
 
 ### `entity_root_from_hip(hip_path) -> Path`
-Determine entity root from a hip file path. Asset hips (`…/work/houdini/{hip}`) → 3 levels up; shot hips (`…/houdini/{hip}`) → 2 levels up.
+Determine entity root from a hip file path. Both shot and asset hips live at `…/FX/work/houdini/{hip}` → entity root is the `FX/` directory (3 levels up).
 
 ### `build_publish_path(entity_root, entity, task, publish_name, fmt, version, animated=True) -> Path`
 Full published file path for geo/usd/abc/vdb output. Directory: `{entity_root}/publish/{folder_fmt}/{task}/{publish_name}/v{VER}/`. Raises `ValueError` for unknown `fmt`.

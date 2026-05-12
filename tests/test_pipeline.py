@@ -80,7 +80,7 @@ def test_hip_filename():
 def test_parse_hip_filename_valid():
     import pipeline
     result = pipeline.parse_hip_filename("SQ010_0010_fx_falling-ice_v003.hip")
-    assert result == {"entity": "SQ010_0010", "task": "falling-ice", "version": 3, "version_str": "v003"}
+    assert result == {"entity": "SQ010_0010", "task": "falling-ice", "descriptor": "", "version": 3, "version_str": "v003"}
 
 
 def test_parse_hip_filename_invalid():
@@ -124,7 +124,7 @@ def test_mp4_filename():
 def test_shot_work_houdini(temp_env):
     import pipeline
     p = pipeline.shot_work_houdini("my-project", "SQ010", "0010")
-    assert str(p).endswith("shows/my-project/sequences/SQ010/0010/FX/work/houdini")
+    assert str(p).endswith("shows/my-project/SQ010/0010/FX/work/houdini")
 
 
 def test_asset_work_houdini(temp_env):
@@ -187,3 +187,21 @@ def test_make_cache_version_dirs(tmp_path):
     result = pipeline.make_cache_version_dirs(tmp_path / "cache", 1)
     assert result["geo"].exists()
     assert result["vdb"].exists()
+
+
+# ---------------------------------------------------------------------------
+# entity_root_from_hip
+# ---------------------------------------------------------------------------
+
+def test_entity_root_from_hip_shot(tmp_path):
+    import pipeline
+    hip = tmp_path / "shows" / "proj" / "SQ010" / "0010" / "FX" / "work" / "houdini" / "shot_fx_sim_v001.hip"
+    result = pipeline.entity_root_from_hip(hip)
+    assert result == tmp_path / "shows" / "proj" / "SQ010" / "0010" / "FX"
+
+
+def test_entity_root_from_hip_asset(tmp_path):
+    import pipeline
+    hip = tmp_path / "shows" / "proj" / "assets" / "char" / "hero" / "FX" / "work" / "houdini" / "hero_fx_sim_v001.hip"
+    result = pipeline.entity_root_from_hip(hip)
+    assert result == tmp_path / "shows" / "proj" / "assets" / "char" / "hero" / "FX"
