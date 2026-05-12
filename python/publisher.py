@@ -97,11 +97,10 @@ def _get_output_parm(node):
 
 
 def _is_animated(node):
-    parm = _get_output_parm(node)
-    if parm is None:
+    trange = node.parm("trange")
+    if trange is None:
         return False
-    path = parm.eval()
-    return "$F" in path or "%0" in path
+    return trange.eval() > 0
 
 
 def _list_obj_cameras():
@@ -121,7 +120,7 @@ def _list_scene_viewers():
         import hou
     except ImportError:
         return []
-    return [p for p in hou.ui.paneTabs() if isinstance(p, hou.SceneViewer)]
+    return [p for p in hou.ui.paneTabs() if p.type() == hou.paneTabType.SceneViewer]
 
 
 # ---------------------------------------------------------------------------

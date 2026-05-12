@@ -502,7 +502,7 @@ def flipbook_viewport(jpg_seq_path: str, frame_range: tuple,
 
     if scene_viewer is None:
         for pane in hou.ui.paneTabs():
-            if isinstance(pane, hou.SceneViewer):
+            if pane.type() == hou.paneTabType.SceneViewer:
                 scene_viewer = pane
                 break
     if scene_viewer is None:
