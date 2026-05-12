@@ -3,6 +3,7 @@ Houdini FX Pipeline — File Manager dialog (PySide6).
 Thin UI layer — all logic delegated to pipeline.py.
 """
 
+import html as html_module
 import logging
 import re
 import sys
@@ -11,12 +12,12 @@ from pathlib import Path
 try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QLabel, QComboBox, QPushButton, QListWidget, QListWidgetItem,
-        QStatusBar, QGroupBox, QDialog, QDialogButtonBox, QFormLayout,
-        QLineEdit, QMessageBox, QPlainTextEdit,
+        QLabel, QComboBox, QPushButton, QStatusBar, QGroupBox, QDialog,
+        QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox,
+        QTreeWidget, QTreeWidgetItem, QSplitter, QTextEdit, QHeaderView,
     )
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QFont
+    from PySide6.QtCore import Qt, QUrl
+    from PySide6.QtGui import QFont, QKeySequence, QDesktopServices, QShortcut
 except ImportError:
     raise RuntimeError("PySide6 is required. Install it or run from inside Houdini.")
 
@@ -181,18 +182,30 @@ class NewVersionDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class _LogPanelHandler(logging.Handler):
-    """Logging handler that appends records to a QPlainTextEdit."""
+    """Logging handler that appends colored HTML records to a QTextEdit."""
 
-    def __init__(self, widget: "QPlainTextEdit"):
+    _COLORS = {
+        "CRITICAL": "#ff4444",
+        "ERROR":    "#ff5555",
+        "WARNING":  "#ffaa00",
+        "DEBUG":    "#888888",
+    }
+
+    def __init__(self, widget: "QTextEdit"):
         super().__init__()
         self._widget = widget
-        self.setFormatter(logging.Formatter("%(levelname)s  %(message)s"))
+        self.setFormatter(logging.Formatter("%(levelname)-8s %(message)s"))
 
     def emit(self, record: logging.LogRecord):
         try:
-            self._widget.appendPlainText(self.format(record))
+            msg = html_module.escape(self.format(record))
+            color = self._COLORS.get(record.levelname)
+            if color:
+                self._widget.append(f'<span style="color:{color};">{msg}</span>')
+            else:
+                self._widget.append(msg)
         except RuntimeError:
-            pass  # widget deleted (window closed between reloads)
+            pass  # widget deleted
         except Exception:
             self.handleError(record)
 
@@ -205,7 +218,7 @@ class FileManagerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FX File Manager")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(900, 600)
         self._build_ui()
         self._setup_logging()
         self._populate_projects()
@@ -254,41 +267,87 @@ class FileManagerWindow(QMainWindow):
         ctx_layout.addStretch()
         root_layout.addWidget(ctx_group)
 
-        # Hip file list
+        # Splitter: hip tree (top) + log panel (bottom)
+        splitter = QSplitter(Qt.Vertical)
+
+        # Hip file tree
         hip_group = QGroupBox("Hip files")
         hip_layout = QVBoxLayout(hip_group)
-        self._hip_list = QListWidget()
-        self._hip_list.currentItemChanged.connect(
-            lambda cur, _: self._open_btn.setEnabled(cur is not None)
-        )
-        self._hip_list.itemDoubleClicked.connect(self._on_open_hip)
-        hip_layout.addWidget(self._hip_list)
+
+        self._hip_tree = QTreeWidget()
+        self._hip_tree.setColumnCount(3)
+        self._hip_tree.setHeaderLabels(["Filename / Task", "Version", "Size"])
+        self._hip_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._hip_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._hip_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._hip_tree.setSelectionBehavior(QTreeWidget.SelectRows)
+        self._hip_tree.currentItemChanged.connect(self._on_hip_selection_changed)
+        self._hip_tree.itemDoubleClicked.connect(self._on_open_hip)
+        hip_layout.addWidget(self._hip_tree)
 
         btn_row = QHBoxLayout()
-        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn = QPushButton("Refresh  (F5)")
+        self._refresh_btn.setToolTip("Re-scan the shot folder for hip files")
         self._refresh_btn.clicked.connect(self._refresh_hips)
+
         self._open_btn = QPushButton("Open")
-        self._open_btn.clicked.connect(self._on_open_hip)
+        self._open_btn.setToolTip("Open the selected hip file in Houdini")
         self._open_btn.setEnabled(False)
+        self._open_btn.clicked.connect(self._on_open_hip)
+
+        self._copy_btn = QPushButton("Copy Path")
+        self._copy_btn.setToolTip("Copy full file path to clipboard")
+        self._copy_btn.setEnabled(False)
+        self._copy_btn.clicked.connect(self._on_copy_path)
+
+        self._reveal_btn = QPushButton("Reveal")
+        self._reveal_btn.setToolTip("Open the containing folder in the file manager")
+        self._reveal_btn.setEnabled(False)
+        self._reveal_btn.clicked.connect(self._on_reveal)
+
         self._new_version_btn = QPushButton("+ Version")
-        self._new_version_btn.clicked.connect(self._on_new_version)
+        self._new_version_btn.setToolTip("Create a new versioned hip file for this shot")
         self._new_version_btn.setEnabled(False)
+        self._new_version_btn.clicked.connect(self._on_new_version)
+
         btn_row.addWidget(self._refresh_btn)
         btn_row.addWidget(self._open_btn)
-        btn_row.addWidget(self._new_version_btn)
+        btn_row.addWidget(self._copy_btn)
+        btn_row.addWidget(self._reveal_btn)
         btn_row.addStretch()
+        btn_row.addWidget(self._new_version_btn)
         hip_layout.addLayout(btn_row)
-        root_layout.addWidget(hip_group)
+        splitter.addWidget(hip_group)
 
         # Log panel
-        self._log_panel = QPlainTextEdit()
+        log_group = QGroupBox("Log")
+        log_layout = QVBoxLayout(log_group)
+
+        log_header = QHBoxLayout()
+        log_header.addStretch()
+        clear_btn = QPushButton("Clear")
+        clear_btn.setMaximumWidth(60)
+        clear_btn.setToolTip("Clear the log output")
+        clear_btn.clicked.connect(lambda: self._log_panel.clear())
+        log_header.addWidget(clear_btn)
+        log_layout.addLayout(log_header)
+
+        self._log_panel = QTextEdit()
         self._log_panel.setReadOnly(True)
-        self._log_panel.setMaximumHeight(120)
         self._log_panel.setFont(QFont("Monospace", 9))
         self._log_panel.setPlaceholderText("Pipeline log…")
-        root_layout.addWidget(self._log_panel)
+        log_layout.addWidget(self._log_panel)
+        splitter.addWidget(log_group)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        root_layout.addWidget(splitter)
 
         self.setStatusBar(QStatusBar())
+
+        # Keyboard shortcuts
+        QShortcut(QKeySequence("F5"), self, self._refresh_hips)
+        QShortcut(QKeySequence("Return"), self, self._on_open_hip)
 
     def _setup_logging(self):
         handler = _LogPanelHandler(self._log_panel)
@@ -298,7 +357,7 @@ class FileManagerWindow(QMainWindow):
             lg = logging.getLogger(log_name)
             lg.setLevel(logging.DEBUG)
             lg.handlers.clear()
-            lg.propagate = False  # don't let Houdini's root logger duplicate output
+            lg.propagate = False
             lg.addHandler(handler)
             lg.addHandler(stream_handler)
 
@@ -325,6 +384,7 @@ class FileManagerWindow(QMainWindow):
         project = self._project_combo.itemData(index)
         if not project:
             return
+        self.setWindowTitle(f"FX File Manager — {project['name']}")
         self._seq_combo.blockSignals(True)
         self._seq_combo.clear()
         for seq in project.get("sequences", []):
@@ -350,7 +410,7 @@ class FileManagerWindow(QMainWindow):
         self._refresh_hips()
 
     def _refresh_hips(self):
-        self._hip_list.clear()
+        self._hip_tree.clear()
         project = self._project_combo.currentData()
         seq = self._seq_combo.currentText()
         shot = self._shot_combo.currentText()
@@ -359,11 +419,63 @@ class FileManagerWindow(QMainWindow):
             return
         work_dir = pipeline.shot_work_houdini(project["folder"], seq, shot)
         hips = pipeline.find_hip_files(work_dir)
+
+        task_groups: dict[str, QTreeWidgetItem] = {}
         for hip in hips:
-            item = QListWidgetItem(hip.name)
-            item.setData(Qt.UserRole, str(hip))
-            self._hip_list.addItem(item)
+            parsed = pipeline.parse_hip_filename(hip.name)
+            task = parsed["task"] if parsed else "unknown"
+            ver_str = parsed["version_str"] if parsed else ""
+
+            if task not in task_groups:
+                group = QTreeWidgetItem(self._hip_tree, [task, "", ""])
+                font = group.font(0)
+                font.setBold(True)
+                group.setFont(0, font)
+                group.setExpanded(True)
+                task_groups[task] = group
+
+            size_str = self._format_size(hip.stat().st_size) if hip.exists() else ""
+            child = QTreeWidgetItem(task_groups[task], [hip.name, ver_str, size_str])
+            child.setData(0, Qt.UserRole, str(hip))
+
+        # Bold the latest version in each task group
+        for group in task_groups.values():
+            n = group.childCount()
+            if n > 0:
+                latest = group.child(n - 1)
+                for col in range(3):
+                    f = latest.font(col)
+                    f.setBold(True)
+                    latest.setFont(col, f)
+
         self.statusBar().showMessage(f"{len(hips)} hip file(s) found in {work_dir}")
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        if size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    # ------------------------------------------------------------------
+    # Hip selection
+    # ------------------------------------------------------------------
+
+    def _current_hip_path(self) -> str | None:
+        item = self._hip_tree.currentItem()
+        if item is None or item.parent() is None:
+            return None
+        return item.data(0, Qt.UserRole)
+
+    def _on_hip_selection_changed(self, current, _previous):
+        path = self._current_hip_path()
+        is_hip = path is not None
+        self._open_btn.setEnabled(is_hip)
+        self._copy_btn.setEnabled(is_hip)
+        self._reveal_btn.setEnabled(is_hip)
+        if is_hip:
+            self.statusBar().showMessage(path)
 
     # ------------------------------------------------------------------
     # Add actions
@@ -420,11 +532,14 @@ class FileManagerWindow(QMainWindow):
         self._shot_combo.setCurrentText(shot)
         self.statusBar().showMessage(f"Shot '{seq}/{shot}' created at {work_dir}")
 
+    # ------------------------------------------------------------------
+    # Hip file actions
+    # ------------------------------------------------------------------
+
     def _on_open_hip(self, *_):
-        item = self._hip_list.currentItem()
-        if not item:
+        path = self._current_hip_path()
+        if not path:
             return
-        hip_path = item.data(Qt.UserRole)
         try:
             import hou
             if hou.hipFile.hasUnsavedChanges():
@@ -435,10 +550,23 @@ class FileManagerWindow(QMainWindow):
                 )
                 if reply != QMessageBox.Yes:
                     return
-            hou.hipFile.load(hip_path)
-            self.statusBar().showMessage(f"Opened: {Path(hip_path).name}")
+            hou.hipFile.load(path)
+            self.statusBar().showMessage(f"Opened: {Path(path).name}")
         except ImportError:
-            QMessageBox.information(self, "Standalone", f"Would open: {hip_path}")
+            QMessageBox.information(self, "Standalone", f"Would open: {path}")
+
+    def _on_copy_path(self):
+        path = self._current_hip_path()
+        if not path:
+            return
+        QApplication.clipboard().setText(path)
+        self.statusBar().showMessage(f"Copied: {path}")
+
+    def _on_reveal(self):
+        path = self._current_hip_path()
+        if not path:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).parent)))
 
     def _on_new_version(self):
         project = self._project_combo.currentData()
@@ -458,7 +586,7 @@ class FileManagerWindow(QMainWindow):
             import hou
             hou.hipFile.save(str(hip_path))
         except ImportError:
-            pass  # standalone mode, no Houdini session
+            pass
         self._refresh_hips()
         self.statusBar().showMessage(f"Saved: {hip_path}")
 
