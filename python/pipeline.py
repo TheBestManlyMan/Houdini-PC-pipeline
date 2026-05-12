@@ -481,6 +481,7 @@ def encode_mp4(jpg_seq_path: str, output_mp4: str, fps=None,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-crf", "18",
+        "-y",
         output_mp4,
     ]
     result = subprocess.run(cmd, capture_output=True)
@@ -523,3 +524,59 @@ def flipbook_viewport(jpg_seq_path: str, frame_range: tuple,
 
     sv.flipbook(settings=settings)
     logger.info("Flipbook captured: %s  frames %s–%s", jpg_seq_path, *frame_range)
+
+
+def encode_mp4_from_exr(exr_seq_path: str, output_mp4: str, fps=None,
+                         frame_start: int = 1) -> None:
+    cfg = load_config()
+    ffmpeg = cfg.get("ffmpeg", "ffmpeg")
+    frame_rate = fps or cfg.get("default_fps", 24)
+    ffmpeg_input = exr_seq_path.replace("$F4", "%04d")
+    cmd = [
+        ffmpeg,
+        "-framerate", str(frame_rate),
+        "-start_number", str(frame_start),
+        "-i", ffmpeg_input,
+        "-vf", "tonemap=reinhard:desat=0",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-crf", "18",
+        "-y",
+        output_mp4,
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg failed (code {result.returncode}):\n"
+            + result.stderr.decode(errors="replace")
+        )
+    logger.info("Encoded from EXR: %s", output_mp4)
+
+
+def build_exr_path(entity_root, entity, task, descriptor, rop_name,
+                   version) -> Path:
+    entity_root = Path(entity_root)
+    ver = version_str(version)
+    directory = entity_root / "publish" / "render" / task / rop_name / ver
+    filename = f"{entity}_fx_{task}_{descriptor}_{rop_name}_{ver}.$F4.exr"
+    return directory / filename
+
+
+def build_usd_cache_path(entity_root, entity, task, descriptor,
+                         version) -> Path:
+    entity_root = Path(entity_root)
+    ver = version_str(version)
+    directory = entity_root / "cache" / "usd" / task / descriptor / ver
+    filename = f"{entity}_fx_{task}_{descriptor}_{ver}.usd"
+    return directory / filename
+
+
+def get_next_render_version(entity_root, task) -> int:
+    entity_root = Path(entity_root)
+    render_dir = entity_root / "publish" / "render" / task
+    found = []
+    if render_dir.exists():
+        for rop_dir in render_dir.iterdir():
+            if rop_dir.is_dir():
+                found.extend(get_versions(rop_dir))
+    return (max(found) + 1) if found else 1
