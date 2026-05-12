@@ -82,11 +82,11 @@ Zero-padded version string, e.g. `version_str(3)` → `"v003"`.
 
 ## Hip file naming
 
-### `hip_filename(entity, task, version) -> str`
-`{entity}_fx_{task}_v{VER}.hip`
+### `hip_filename(entity, task, version, descriptor="") -> str`
+`{entity}_fx_{task}_v{VER}.hip` — or `{entity}_fx_{task}_{descriptor}_v{VER}.hip` when `descriptor` is non-empty.
 
 ### `parse_hip_filename(filename) -> dict | None`
-Parse `entity`, `task`, `version`, `version_str` from a hip filename. Returns `None` on no match.
+Parse `entity`, `task`, `descriptor`, `version`, `version_str` from a hip filename. Tries 4-part regex first, falls back to 3-part. Old format gets `"descriptor": ""`. Returns `None` on no match.
 
 ### `find_hip_files(work_houdini: Path) -> list[Path]`
 Glob all `*_fx_*_v???.hip` files, sorted.
@@ -94,8 +94,8 @@ Glob all `*_fx_*_v???.hip` files, sorted.
 ### `latest_hip(work_houdini: Path) -> Path | None`
 Most recent hip file by filename sort, or `None`.
 
-### `next_hip_path(work_houdini: Path, entity, task) -> Path`
-Full path for the next versioned hip for the given task.
+### `next_hip_path(work_houdini: Path, entity, task, descriptor="") -> Path`
+Full path for the next versioned hip for the given task + descriptor combination.
 
 ---
 
@@ -141,3 +141,40 @@ Strip `OUT_` prefix and lowercase. `"OUT_falling-ice"` → `"falling-ice"`.
 
 ### `build_ffmpeg_cmd(image_seq_path, output_mp4, fps) -> list[str]`
 Build the ffmpeg command list for an image sequence → MP4 encode. Uses config `ffmpeg` path and `default_fps`.
+
+---
+
+## Publisher — path builders
+
+### `entity_root_from_hip(hip_path) -> Path`
+Determine entity root from a hip file path. Asset hips (`…/work/houdini/{hip}`) → 3 levels up; shot hips (`…/houdini/{hip}`) → 2 levels up.
+
+### `build_publish_path(entity_root, entity, task, publish_name, fmt, version, animated=True) -> Path`
+Full published file path for geo/usd/abc/vdb output. Directory: `{entity_root}/publish/{folder_fmt}/{task}/{publish_name}/v{VER}/`. Raises `ValueError` for unknown `fmt`.
+
+### `build_hip_publish_path(entity_root, entity, task, descriptor, version) -> Path`
+Hip snapshot publish path: `{entity_root}/publish/houdini/{task}/{desc}/v{VER}/{entity}_fx_{task}_{desc}_{ver}.hip`. `desc` defaults to `"main"` when `descriptor` is empty.
+
+### `build_preview_jpg_path(entity_root, entity, task, publish_name, version, animated=True) -> Path`
+Preview JPG sequence path under `{entity_root}/preview/{task}/{publish_name}/v{VER}/`. Animated filename includes `$F4`; static is a single `.jpg`.
+
+### `build_mp4_path(entity_root, entity, task, publish_name, version) -> Path`
+MP4 preview path: `{entity_root}/preview/{task}/{publish_name}/v{VER}/{entity}_fx_{task}_{publish_name}_{ver}.mp4`.
+
+### `get_next_publish_version(entity_root, task, publish_name) -> int`
+Scan `publish/{geo,usd,houdini}/{task}/{publish_name}` and `preview/{task}/{publish_name}` for existing `v###` dirs. Returns `max + 1` (or `1` if none found).
+
+### `hip_snapshot_paths(entity_root, current_hip, task, descriptor, version) -> tuple[Path, Path]`
+Pure path calculation — no I/O. Returns `(snapshot_path, next_work_path)`. Entity parsed from `current_hip` filename.
+
+### `snapshot_and_increment_hip(entity_root, current_hip_path, task, descriptor, version) -> tuple[Path, Path]`
+Save current hip, copy snapshot to `publish/houdini`, save as `version + 1` in work. Requires Houdini. Returns `(snapshot_path, next_work_path)`.
+
+### `write_publish_metadata(publish_dir, metadata: dict) -> Path`
+Write `publish_meta.json` in `publish_dir`. Returns the meta file path.
+
+### `encode_mp4(jpg_seq_path, output_mp4, fps=None, frame_start=1) -> None`
+Encode a JPG sequence to MP4 via ffmpeg (path from config). Replaces `$F4` → `%04d`. Raises `RuntimeError` on non-zero ffmpeg exit.
+
+### `flipbook_viewport(jpg_seq_path, frame_range, camera=None, resolution=(1280,720), scene_viewer=None) -> None`
+Capture viewport frames using `hou.SceneViewer.flipbook()`. Requires Houdini. Finds first SceneViewer if none provided. If `camera` string given, resolves via `hou.node()` and sets viewport camera.
