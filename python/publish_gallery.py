@@ -32,20 +32,19 @@ def _find_entity_roots(projects_root: Path, projects: list) -> list:
         if not proj_dir.exists():
             continue
 
-        # Shots: {proj}/{seq}/{shot}/FX/
+        # Shots: {proj}/{seq}/{shot}/  (entity_root = shot dir itself)
         for seq_dir in proj_dir.iterdir():
             if not seq_dir.is_dir() or seq_dir.name == "assets":
                 continue
             for shot_dir in seq_dir.iterdir():
                 if not shot_dir.is_dir():
                     continue
-                fx = shot_dir / "FX"
-                if fx.exists():
+                if (shot_dir / "houdini").exists() or (shot_dir / "preview").exists():
                     roots.append({
                         "project": proj_name,
                         "entity_type": "shot",
                         "context": f"{seq_dir.name}/{shot_dir.name}",
-                        "entity_root": fx,
+                        "entity_root": shot_dir,
                     })
 
         # Assets: {proj}/assets/{asset_type}/{asset}/FX/
