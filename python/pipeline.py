@@ -94,40 +94,68 @@ def add_project(name: str, folder: str, fps: int = None, resolution: str = None,
 # Path builders — shot context
 # ---------------------------------------------------------------------------
 
-def shot_fx_root(project_folder: str, seq: str, shot: str) -> Path:
+# ---------------------------------------------------------------------------
+# Path builders — private shared helpers (everything below FX/ is identical)
+# ---------------------------------------------------------------------------
+
+def _shot_fx_root(project_folder: str, seq: str, shot: str) -> Path:
     return projects_root() / project_folder / seq / shot / "FX"
 
 
-def shot_work_houdini(project_folder: str, seq: str, shot: str) -> Path:
-    return shot_fx_root(project_folder, seq, shot) / "work" / "houdini"
-
-
-def shot_cache_root(project_folder: str, seq: str, shot: str, task: str) -> Path:
-    return shot_work_houdini(project_folder, seq, shot) / "cache" / task
-
-
-def shot_publish_root(project_folder: str, seq: str, shot: str, fmt: str, task: str) -> Path:
-    return shot_fx_root(project_folder, seq, shot) / "publish" / fmt / task
-
-
-# ---------------------------------------------------------------------------
-# Path builders — asset context
-# ---------------------------------------------------------------------------
-
-def asset_fx_root(project_folder: str, asset_type: str, asset: str) -> Path:
+def _asset_fx_root(project_folder: str, asset_type: str, asset: str) -> Path:
     return projects_root() / project_folder / "assets" / asset_type / asset / "FX"
 
 
+def _work_houdini(fx_root: Path) -> Path:
+    return fx_root / "work" / "houdini"
+
+
+def _cache_root(fx_root: Path, task: str) -> Path:
+    return _work_houdini(fx_root) / "cache" / task
+
+
+def _publish_root(fx_root: Path, fmt: str, task: str) -> Path:
+    return fx_root / "publish" / fmt / task
+
+
+# ---------------------------------------------------------------------------
+# Path builders — shot context (public API)
+# ---------------------------------------------------------------------------
+
+def shot_fx_root(project_folder: str, seq: str, shot: str) -> Path:
+    return _shot_fx_root(project_folder, seq, shot)
+
+
+def shot_work_houdini(project_folder: str, seq: str, shot: str) -> Path:
+    return _work_houdini(_shot_fx_root(project_folder, seq, shot))
+
+
+def shot_cache_root(project_folder: str, seq: str, shot: str, task: str) -> Path:
+    return _cache_root(_shot_fx_root(project_folder, seq, shot), task)
+
+
+def shot_publish_root(project_folder: str, seq: str, shot: str, fmt: str, task: str) -> Path:
+    return _publish_root(_shot_fx_root(project_folder, seq, shot), fmt, task)
+
+
+# ---------------------------------------------------------------------------
+# Path builders — asset context (public API)
+# ---------------------------------------------------------------------------
+
+def asset_fx_root(project_folder: str, asset_type: str, asset: str) -> Path:
+    return _asset_fx_root(project_folder, asset_type, asset)
+
+
 def asset_work_houdini(project_folder: str, asset_type: str, asset: str) -> Path:
-    return asset_fx_root(project_folder, asset_type, asset) / "work" / "houdini"
+    return _work_houdini(_asset_fx_root(project_folder, asset_type, asset))
 
 
 def asset_cache_root(project_folder: str, asset_type: str, asset: str, task: str) -> Path:
-    return asset_work_houdini(project_folder, asset_type, asset) / "cache" / task
+    return _cache_root(_asset_fx_root(project_folder, asset_type, asset), task)
 
 
 def asset_publish_root(project_folder: str, asset_type: str, asset: str, fmt: str, task: str) -> Path:
-    return asset_fx_root(project_folder, asset_type, asset) / "publish" / fmt / task
+    return _publish_root(_asset_fx_root(project_folder, asset_type, asset), fmt, task)
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +257,19 @@ def mp4_filename(entity: str, task: str, version: int) -> str:
 # Directory creation
 # ---------------------------------------------------------------------------
 
-def make_shot_work_dirs(project_folder: str, seq: str, shot: str) -> None:
-    path = shot_work_houdini(project_folder, seq, shot)
+def _make_work_dirs(fx_root: Path) -> Path:
+    path = _work_houdini(fx_root)
     path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def make_shot_work_dirs(project_folder: str, seq: str, shot: str) -> None:
+    path = _make_work_dirs(_shot_fx_root(project_folder, seq, shot))
     logger.info("Shot dirs created: %s", path)
 
 
 def make_asset_work_dirs(project_folder: str, asset_type: str, asset: str) -> None:
-    path = asset_work_houdini(project_folder, asset_type, asset)
-    path.mkdir(parents=True, exist_ok=True)
+    path = _make_work_dirs(_asset_fx_root(project_folder, asset_type, asset))
     logger.info("Asset dirs created: %s", path)
 
 
