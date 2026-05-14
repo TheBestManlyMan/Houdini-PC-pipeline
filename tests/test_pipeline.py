@@ -28,6 +28,11 @@ def temp_env(tmp_path, monkeypatch):
     projects_path.write_text(json.dumps({"projects": []}))
 
     import pipeline
+    import pipeline.config
+    # Patch the canonical locations in the config module — all submodules read from there.
+    monkeypatch.setattr(pipeline.config, "_CONFIG_PATH", config_path)
+    monkeypatch.setattr(pipeline.config, "_PROJECTS_PATH", projects_path)
+    # Keep the __init__ re-exports in sync for any code that reads them directly.
     monkeypatch.setattr(pipeline, "_CONFIG_PATH", config_path)
     monkeypatch.setattr(pipeline, "_PROJECTS_PATH", projects_path)
     (tmp_path / "shows").mkdir()
@@ -205,3 +210,220 @@ def test_entity_root_from_hip_asset(tmp_path):
     hip = tmp_path / "shows" / "proj" / "assets" / "char" / "hero" / "FX" / "work" / "houdini" / "hero_fx_sim_v001.hip"
     result = pipeline.entity_root_from_hip(hip)
     assert result == tmp_path / "shows" / "proj" / "assets" / "char" / "hero" / "FX"
+
+
+# ---------------------------------------------------------------------------
+# Validation (Phase 3)
+# ---------------------------------------------------------------------------
+
+def test_validate_entity_name_valid():
+    import pipeline
+    assert pipeline.validate_entity_name("SQ010_0010") == "SQ010_0010"
+    assert pipeline.validate_entity_name("hero") == "hero"
+
+
+def test_validate_entity_name_invalid():
+    import pipeline
+    with pytest.raises(ValueError):
+        pipeline.validate_entity_name("")
+    with pytest.raises(ValueError):
+        pipeline.validate_entity_name("my/entity")
+
+
+def test_validate_task_name_normalises():
+    import pipeline
+    assert pipeline.validate_task_name("Falling Ice") == "falling-ice"
+    assert pipeline.validate_task_name("dust-sim") == "dust-sim"
+
+
+def test_validate_task_name_invalid():
+    import pipeline
+    with pytest.raises(ValueError):
+        pipeline.validate_task_name("")
+    with pytest.raises(ValueError):
+        pipeline.validate_task_name("---")
+
+
+def test_validate_publish_type_valid():
+    import pipeline
+    for t in ("cache", "flipbook", "render", "usd", "hip"):
+        assert pipeline.validate_publish_type(t) == t
+
+
+def test_validate_publish_type_invalid():
+    import pipeline
+    with pytest.raises(ValueError):
+        pipeline.validate_publish_type("nope")
+
+
+def test_validate_version_int():
+    import pipeline
+    assert pipeline.validate_version(1) == 1
+    assert pipeline.validate_version(42) == 42
+
+
+def test_validate_version_str():
+    import pipeline
+    assert pipeline.validate_version("v003") == 3
+    assert pipeline.validate_version("v042") == 42
+
+
+def test_validate_version_invalid():
+    import pipeline
+    with pytest.raises(ValueError):
+        pipeline.validate_version(0)
+    with pytest.raises(ValueError):
+        pipeline.validate_version("v99")  # not 3-digit zero-padded
+
+
+def test_validate_context_shot():
+    import pipeline
+    ctx = {"type": "shot", "sequence": "SQ010", "shot": "0010"}
+    assert pipeline.validate_context(ctx) == ctx
+
+
+def test_validate_context_asset():
+    import pipeline
+    ctx = {"type": "asset", "asset_type": "character", "asset": "hero"}
+    assert pipeline.validate_context(ctx) == ctx
+
+
+def test_validate_context_invalid():
+    import pipeline
+    with pytest.raises(ValueError):
+        pipeline.validate_context({"type": "unknown"})
+    with pytest.raises(ValueError):
+        pipeline.validate_context({"type": "shot", "sequence": "SQ010"})  # missing shot
+
+
+# ---------------------------------------------------------------------------
+# Metadata (Phase 2)
+# ---------------------------------------------------------------------------
+
+def test_build_metadata_structure():
+    import pipeline
+    meta = pipeline.build_metadata(
+        project="TestShow",
+        context={"type": "shot", "sequence": "SQ010", "shot": "0010"},
+        entity="SQ010_0010",
+        task="dust-sim",
+        publish_type="cache",
+        version=1,
+    )
+    assert meta["schema_version"] == 2
+    assert meta["uuid"].startswith("pub_")
+    assert meta["entity"] == "SQ010_0010"
+    assert meta["task"] == "dust-sim"
+    assert meta["publish_type"] == "cache"
+    assert meta["version"] == 1
+    assert isinstance(meta["dependencies"], list)
+    assert isinstance(meta["tags"], list)
+    assert isinstance(meta["notes"], list)
+
+
+def test_build_metadata_wedge():
+    import pipeline
+    meta = pipeline.build_metadata(
+        project="P",
+        context={"type": "asset", "asset_type": "prop", "asset": "rock"},
+        entity="rock",
+        task="sim",
+        publish_type="cache",
+        version=2,
+        wedge={"parameter": "density", "value": 0.6},
+    )
+    assert meta["wedge"]["parameter"] == "density"
+    assert meta["wedge"]["value"] == 0.6
+
+
+def test_write_and_read_metadata(tmp_path):
+    import pipeline
+    pub_dir = tmp_path / "pub" / "v001"
+    pub_dir.mkdir(parents=True)
+    meta = pipeline.build_metadata(
+        project="P",
+        context={"type": "shot", "sequence": "SQ010", "shot": "0010"},
+        entity="SQ010_0010",
+        task="dust-sim",
+        publish_type="cache",
+        version=1,
+    )
+    pipeline.write_metadata(pub_dir, meta)
+    assert (pub_dir / "metadata.json").exists()
+    loaded = pipeline.read_metadata(pub_dir)
+    assert loaded["uuid"] == meta["uuid"]
+
+
+def test_write_publish_metadata_upgrades_legacy(tmp_path):
+    """write_publish_metadata must upgrade flat v1 dicts to v2 schema."""
+    import pipeline
+    pub_dir = tmp_path / "legacy" / "v001"
+    pub_dir.mkdir(parents=True)
+    legacy = {
+        "schema_version": 1,
+        "entity": "hero",
+        "task": "sim",
+        "version": 3,
+        "published_by": "maxborg",
+        "published_at": "2025-01-01T00:00:00",
+    }
+    pipeline.write_publish_metadata(pub_dir, legacy)
+    loaded = pipeline.read_metadata(pub_dir)
+    assert loaded["schema_version"] == 2
+    assert "uuid" in loaded
+
+
+# ---------------------------------------------------------------------------
+# Standard outputs (Phase 6)
+# ---------------------------------------------------------------------------
+
+def test_build_standard_output_paths(tmp_path):
+    import pipeline
+    paths = pipeline.build_standard_output_paths(tmp_path / "v001")
+    assert "thumbnail" in paths
+    assert "mp4" in paths
+    assert "contactsheet" in paths
+    assert "metadata" in paths
+    assert paths["thumbnail"].endswith("thumbnail.jpg")
+
+
+# ---------------------------------------------------------------------------
+# Indexer (Phase 4)
+# ---------------------------------------------------------------------------
+
+def test_build_project_index_empty(temp_env):
+    import pipeline
+    import pipeline.config
+    root = pipeline.config._CONFIG_PATH.parent / "shows"
+    root.mkdir(exist_ok=True)
+    pipeline.add_project("Index Test", "idx-test")
+    (root / "idx-test").mkdir(exist_ok=True)
+    idx = pipeline.build_project_index("idx-test")
+    assert idx["folder"] == "idx-test"
+    assert idx["publishes"] == []
+
+
+def test_build_project_index_with_metadata(temp_env, tmp_path):
+    import pipeline
+    import pipeline.config
+    root = pipeline.config._CONFIG_PATH.parent / "shows"
+    root.mkdir(exist_ok=True)
+    pipeline.add_project("Scan Test", "scan-test")
+
+    # Create a fake publish folder with metadata.json
+    pub_dir = (root / "scan-test" / "SQ010" / "0010" / "FX" /
+               "publish" / "geo" / "dust-sim" / "main" / "v001")
+    pub_dir.mkdir(parents=True)
+    meta = pipeline.build_metadata(
+        project="Scan Test",
+        context={"type": "shot", "sequence": "SQ010", "shot": "0010"},
+        entity="SQ010_0010",
+        task="dust-sim",
+        publish_type="cache",
+        version=1,
+    )
+    pipeline.write_metadata(pub_dir, meta)
+
+    idx = pipeline.build_project_index("scan-test")
+    assert idx["publish_count"] == 1
+    assert idx["publishes"][0]["entity"] == "SQ010_0010"
