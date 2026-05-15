@@ -14,3 +14,12 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Pipeline cache — local only, rebuilt from disk
+.pipeline/
+.pipeline/*.db
+.pipeline/publishes.json
+dist/
+
+# Claude Code worktrees
+.claude/worktrees/
