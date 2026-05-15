@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { demoIndex } from '../data/demoIndex.js'
+import { normalizePublish } from '../utils/format.js'
 
 const INDEX_BASE = import.meta.env.VITE_INDEX_BASE ?? ''
 const DEFAULT_API = import.meta.env.VITE_API_BASE ?? `http://${window.location.hostname}:8765/api`
@@ -93,7 +94,7 @@ export function usePublishes(projectFolder) {
       const result = await fetchIndex(projectFolder)
       const data = result.data
       setState({
-        publishes: data.publishes ?? [],
+        publishes: (data.publishes ?? []).map(normalizePublish),
         projects: data.projects ?? [],
         index: data,
         mode: result.mode,
@@ -104,7 +105,7 @@ export function usePublishes(projectFolder) {
       })
     } catch (e) {
       setState({
-        publishes: demoIndex.publishes,
+        publishes: (demoIndex.publishes ?? []).map(normalizePublish),
         projects: demoIndex.projects,
         index: demoIndex,
         mode: 'mock',

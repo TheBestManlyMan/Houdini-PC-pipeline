@@ -1,8 +1,5 @@
 """
-Pipeline API server — serves publish data to the web gallery.
-
-Run from the repo root:
-    python3 python/api_server.py
+Pipeline API server — serves publish data and media files to the web gallery.
 
 Endpoints:
     GET /api/projects           — list of registered projects
@@ -11,6 +8,7 @@ Endpoints:
     GET /api/index/{folder}     — full index dict for one project
     POST /api/reindex           — rebuild all project indexes
     POST /api/reindex/{folder}  — rebuild index for one project
+    GET /media/{path}           — serve media files (thumbnails, mp4s) from shows dir
 """
 
 import sys
@@ -22,8 +20,9 @@ import logging
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 import pipeline
 from pipeline.indexer import (
@@ -45,6 +44,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount the shows directory so the browser can load thumbnails and mp4s.
+# Absolute paths like /home/maxborg/projects/shows/reel/.../thumb.jpg
+# are rewritten to /media/reel/.../thumb.jpg before being sent to the client.
+_shows_root = pipeline.projects_root()
+app.mount("/media", StaticFiles(directory=str(_shows_root)), name="media")
+
+
+# ---------------------------------------------------------------------------
+# Path rewriting — absolute filesystem paths → HTTP /media/... URLs
+# ---------------------------------------------------------------------------
+
+def _mediafy(obj, root: str, media_base: str):
+    """Recursively replace absolute shows-dir paths with /media/... URLs."""
+    if isinstance(obj, dict):
+        return {k: _mediafy(v, root, media_base) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_mediafy(i, root, media_base) for i in obj]
+    if isinstance(obj, str) and obj.startswith(root):
+        rel = obj[len(root):].lstrip("/")
+        return media_base + rel
+    return obj
+
+
+def _rewrite(records, request: Request):
+    root = str(_shows_root)
+    # Use request.base_url so remote devices get the right host:port
+    media_base = str(request.base_url).rstrip("/") + "/media/"
+    return [_mediafy(r, root, media_base) for r in records]
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -56,7 +84,7 @@ def get_projects():
 
 
 @app.get("/api/publishes")
-def get_all_publishes(project: Optional[str] = None):
+def get_all_publishes(request: Request, project: Optional[str] = None):
     """Return flat list of all publish records across all projects (live scan)."""
     projects = pipeline.load_projects()
     if project:
@@ -73,29 +101,35 @@ def get_all_publishes(project: Optional[str] = None):
         except Exception as e:
             log.warning("Skipping project %s: %s", folder, e)
 
-    return all_publishes
+    return _rewrite(all_publishes, request)
 
 
 @app.get("/api/publishes/{folder}")
-def get_project_publishes(folder: str):
+def get_project_publishes(folder: str, request: Request):
     """Return publish records for a single project (live scan)."""
     try:
         idx = build_project_index(folder)
-        return idx.get("publishes", [])
+        return _rewrite(idx.get("publishes", []), request)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/api/index/{folder}")
-def get_project_index(folder: str, cached: bool = False):
+def get_project_index(folder: str, request: Request, cached: bool = False):
     """Return the full index dict for a project. cached=true reads the JSON file."""
     if cached:
         idx = read_project_index(folder)
         if idx is None:
-            raise HTTPException(status_code=404, detail=f"No cached index for '{folder}'. POST /api/reindex/{folder} first.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cached index for '{folder}'. POST /api/reindex/{folder} first.",
+            )
+        idx["publishes"] = _rewrite(idx.get("publishes", []), request)
         return idx
     try:
-        return build_project_index(folder)
+        idx = build_project_index(folder)
+        idx["publishes"] = _rewrite(idx.get("publishes", []), request)
+        return idx
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -111,7 +145,11 @@ def reindex_project(folder: str):
     try:
         path = write_project_index(folder)
         idx = read_project_index(folder)
-        return {"folder": folder, "publish_count": idx.get("publish_count", 0), "index_path": str(path)}
+        return {
+            "folder": folder,
+            "publish_count": idx.get("publish_count", 0),
+            "index_path": str(path),
+        }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
