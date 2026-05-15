@@ -51,6 +51,26 @@ pip install -r requirements.txt
 
 These are only needed to run `server.py`. The rest of the pipeline (publisher, file manager, etc.) has no extra dependencies beyond what Houdini ships with.
 
+## Frontend Build
+
+The browser UI (`web/`) is a Vite + React app that must be built before `server.py` can serve it.
+
+```bash
+./build.sh          # install deps + build (output → pipeline_web/dist/)
+```
+
+Or manually:
+
+```bash
+cd web
+npm install
+npm run build       # output → pipeline_web/dist/
+```
+
+`pipeline_web/dist/` is gitignored — rebuild whenever you change files under `web/src/`.
+
+If you open `http://127.0.0.1:8765` and see a JSON message instead of the UI, run the build command above.
+
 ## Pipeline Manager Server
 
 A local FastAPI server that exposes a REST API for managing projects, sequences, shots, and assets via a browser-based UI.

@@ -337,7 +337,7 @@ def serve_index():
     if index.exists():
         return FileResponse(index)
     return JSONResponse(
-        {"message": "Web UI not built yet. Run: cd pipeline_web && npm install && npm run build"},
+        {"message": "Web UI not built yet. Run: cd web && npm install && npm run build"},
         status_code=200,
     )
 

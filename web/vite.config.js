@@ -8,7 +8,7 @@ export default defineConfig({
     // Proxy publish index JSON requests to a local file server if needed
   },
   build: {
-    outDir: '../dist/gallery',
+    outDir: '../pipeline_web/dist',
     emptyOutDir: true,
   },
 })
