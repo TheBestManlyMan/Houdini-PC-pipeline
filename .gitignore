@@ -6,6 +6,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Frontend
+node_modules/
+web/node_modules/
+
 # Houdini
 *.hdalibrary/
 *.hipnc

@@ -1,6 +1,6 @@
 import React from 'react'
 import PublishCard from './PublishCard.jsx'
-import { versionLabel, formatDate, publishTypeColor } from '../utils/format.js'
+import { versionLabel, formatDate, publishTypeColor, statusLabel, contextLabel } from '../utils/format.js'
 
 export default function PublishGrid({ publishes, selectedId, viewMode, onSelect }) {
   if (publishes.length === 0) {
@@ -14,7 +14,7 @@ export default function PublishGrid({ publishes, selectedId, viewMode, onSelect 
           <thead>
             <tr>
               <th>Entity</th><th>Task</th><th>Type</th><th>Ver</th>
-              <th>Project</th><th>By</th><th>Date</th>
+              <th>Project</th><th>Context</th><th>Status</th><th>By</th><th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -33,6 +33,8 @@ export default function PublishGrid({ publishes, selectedId, viewMode, onSelect 
                 </td>
                 <td>{versionLabel(p.version)}</td>
                 <td>{p.project}</td>
+                <td>{contextLabel(p.context)}</td>
+                <td><span className={`status-pill status-${p.status ?? 'review'}`}>{statusLabel(p.status)}</span></td>
                 <td>{p.created_by}</td>
                 <td>{formatDate(p.created_at)}</td>
               </tr>

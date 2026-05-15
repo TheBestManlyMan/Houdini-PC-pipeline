@@ -11,16 +11,31 @@ Houdini-PC-pipeline/
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
+  start.sh                   # Start API server + web gallery
   CLAUDE.md                  # This file
+  README.md                  # Setup and usage docs
   python/
-    pipeline.py              # Core utility — ALL shared logic lives here
+    pipeline/                # Core package — ALL shared logic lives here
+      __init__.py            # Public API re-exports
+      config.py              # Config loading
+      entities.py            # Project registry
+      paths.py               # Path builders (shot + asset)
+      versioning.py          # Version scanning
+      publish.py             # Hip/publish/preview path helpers
+      cache.py               # Cache directory creation
+      metadata.py            # publish_meta.json read/write
+      indexer.py             # Filesystem scanner → publishes.json
+    api_server.py            # FastAPI server (port 8765) for web gallery
     file_manager.py          # PySide6 File Manager dialog
+    publisher.py             # PySide6 Publisher dialog
+    publish_gallery.py       # Static HTML gallery generator (legacy)
   houdini/
     tool_scripts/            # Shelf tool button scripts
+  web/                       # React gallery frontend (Vite, port 5173)
   docs/
-    pipeline_api.md          # pipeline.py function reference
+    pipeline_api.md          # python/pipeline/ function reference
   tests/
-    test_pipeline.py         # Unit tests for pipeline.py
+    test_pipeline.py         # Unit tests for the pipeline package
   .gitignore
 ```
 
@@ -69,9 +84,9 @@ Houdini-PC-pipeline/
 
 ## Rules — read before writing any code
 
-1. **Check `python/pipeline.py` first.** If a function exists for the task, use it. Never duplicate logic. Never build paths inline in other scripts.
+1. **Check `python/pipeline/` first.** If a function exists for the task, use it. Never duplicate logic. Never build paths inline in other scripts. Import via `import pipeline` or `from pipeline import ...`.
 
-2. **`pipeline.py` owns all logic.** UI files (file_manager.py, future tools) are thin — they call pipeline.py functions and display results. No path building or versioning logic in UI files.
+2. **`python/pipeline/` owns all logic.** UI files (`file_manager.py`, `publisher.py`, tool scripts) are thin — they call pipeline functions and display results. No path building or versioning logic in UI files.
 
 3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. `pipeline.py` loads config relative to its own location — no absolute paths in code.
 
@@ -87,9 +102,11 @@ Houdini-PC-pipeline/
 
 8. **Full file replacement** when more than ~2 spots change in a script.
 
-9. **After editing pipeline.py** — check if `tests/test_pipeline.py` needs updating.
+9. **After editing `python/pipeline/`** — check if `tests/test_pipeline.py` needs updating.
 
 10. **After meaningful API changes** — update `docs/pipeline_api.md`.
+
+11. **Web gallery backend** lives in `python/api_server.py` (FastAPI, port 8765). Frontend lives in `web/` (React/Vite, port 5173). Start both with `start.sh`.
 
 ## Naming conventions
 
