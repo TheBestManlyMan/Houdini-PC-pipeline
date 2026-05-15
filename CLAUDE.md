@@ -133,9 +133,15 @@ Houdini-PC-pipeline/
     {shot}_fx_{task}_v001.hip
     cache/{task}/geo/v001/
     cache/{task}/vdb/v001/
-  publish/render/{task}/v001/
-  publish/{fmt}/{task}/v001/
-  preview/{task}/...
+  publish/
+    {fmt}/          # geo | usd | render | houdini
+      {task}/
+        {publish_name}/
+          v001/     ← metadata.json + output files written here
+  preview/          # one level shallower than publish/
+    {task}/
+      {publish_name}/   # e.g. "flipbook"
+        v001/       ← metadata.json + mp4 + jpg frames written here
 ```
 
 **Asset:**

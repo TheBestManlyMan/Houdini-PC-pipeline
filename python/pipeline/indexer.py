@@ -79,11 +79,14 @@ def _iter_entity_roots(project_dir: Path, project_meta: dict) -> Iterator[dict]:
 # ---------------------------------------------------------------------------
 
 def _iter_publish_dirs(entity_root: Path) -> Iterator[Path]:
-    """Yield every versioned publish directory under an entity root."""
-    for top in (entity_root / "publish", entity_root / "preview"):
-        if not top.is_dir():
-            continue
-        for fmt_dir in top.iterdir():
+    """Yield every versioned publish directory under an entity root.
+
+    publish/ uses 4 levels: publish/{fmt}/{task}/{pub_name}/{ver}/
+    preview/ uses 3 levels: preview/{task}/{pub_name}/{ver}/
+    """
+    pub_top = entity_root / "publish"
+    if pub_top.is_dir():
+        for fmt_dir in pub_top.iterdir():
             if not fmt_dir.is_dir():
                 continue
             for task_dir in fmt_dir.iterdir():
@@ -95,6 +98,18 @@ def _iter_publish_dirs(entity_root: Path) -> Iterator[Path]:
                     for ver_dir in pub_name_dir.iterdir():
                         if ver_dir.is_dir() and ver_dir.name.startswith("v"):
                             yield ver_dir
+
+    preview_top = entity_root / "preview"
+    if preview_top.is_dir():
+        for task_dir in preview_top.iterdir():
+            if not task_dir.is_dir():
+                continue
+            for pub_name_dir in task_dir.iterdir():
+                if not pub_name_dir.is_dir():
+                    continue
+                for ver_dir in pub_name_dir.iterdir():
+                    if ver_dir.is_dir() and ver_dir.name.startswith("v"):
+                        yield ver_dir
 
 
 def _read_publish_record(ver_dir: Path, entity_entry: dict) -> dict | None:
@@ -118,13 +133,22 @@ def _read_publish_record(ver_dir: Path, entity_entry: dict) -> dict | None:
 
 
 def _synthesise_record(ver_dir: Path, entity_entry: dict) -> dict:
-    """Build a minimal index entry from folder path when no metadata.json exists."""
-    parts = ver_dir.parts
-    # Typical layout: .../publish/{fmt}/{task}/{pub_name}/{ver}
+    """Build a minimal index entry from folder path when no metadata.json exists.
+
+    publish/ layout: publish/{fmt}/{task}/{pub_name}/{ver}
+    preview/ layout: preview/{task}/{pub_name}/{ver}  (no fmt level)
+    """
+    entity_root = Path(entity_entry["entity_root"])
     ver_name = ver_dir.name
     pub_name = ver_dir.parent.name
     task = ver_dir.parent.parent.name
-    fmt = ver_dir.parent.parent.parent.name
+
+    # Detect whether this came from preview/ (3 levels) or publish/ (4 levels)
+    top = ver_dir.parent.parent.parent
+    if top == entity_root / "preview":
+        fmt = "flipbook"
+    else:
+        fmt = top.name  # publish/{fmt} → fmt is the grandparent's name
 
     entity_root = entity_entry["entity_root"]
     proj = entity_entry["project"]
@@ -247,6 +271,9 @@ def build_project_index(project_folder: str) -> dict:
                         "asset_type": entity_entry.get("asset_type", ""),
                         "asset": entity_entry.get("asset", ""),
                     }
+
+            if not record.get("project"):
+                record["project"] = project_meta.get("name", project_folder)
 
             record["_warnings"] = _check_missing_outputs(record)
             record["_orphaned"] = _check_orphaned(record)

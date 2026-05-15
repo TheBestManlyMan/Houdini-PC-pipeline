@@ -164,23 +164,48 @@ Strip `OUT_` prefix and lowercase.
 ### `entity_root_from_hip(hip_path) -> Path`
 Determine entity root (`FX/`) from a hip file at `…/FX/work/houdini/{hip}`.
 
+### On-disk path structure
+
+The indexer and gallery server expect the following layout under each entity's `FX/` root:
+
+```
+FX/
+  publish/
+    {fmt}/              # geo | usd | render | houdini
+      {task}/
+        {publish_name}/
+          v001/
+            {entity}_fx_{task}_{publish_name}_v001.{ext}
+            metadata.json
+
+  preview/              # NOTE: one level shallower than publish/
+    {task}/
+      {publish_name}/   # e.g. "flipbook"
+        v001/
+            {entity}_fx_{task}_{publish_name}_v001.mp4
+            {entity}_fx_{task}_{publish_name}_v001.$F4.jpg
+            metadata.json
+```
+
+The indexer scans both trees and yields each versioned directory (`v001/`, `v002/`, …) as a publish record. `publish/` uses 4 levels; `preview/` uses 3 (no `{fmt}` level).
+
 ### `build_publish_path(entity_root, entity, task, publish_name, fmt, version, animated=True) -> Path`
-Full published file path. Supported `fmt`: `"usd"`, `"abc"`, `"bgeo"`, `"vdb"`.
+Full published file path under `publish/{fmt}/{task}/{publish_name}/{ver}/`. Supported `fmt`: `"usd"`, `"abc"`, `"bgeo"`, `"vdb"`.
 
 ### `build_hip_publish_path(entity_root, entity, task, descriptor, version) -> Path`
-Hip snapshot publish path under `publish/houdini/`.
+Hip snapshot publish path under `publish/houdini/{task}/{descriptor}/{ver}/`.
 
 ### `build_preview_jpg_path(entity_root, entity, task, publish_name, version, animated=True) -> Path`
-JPG sequence path under `preview/{task}/{publish_name}/v{VER}/`.
+JPG sequence path under `preview/{task}/{publish_name}/{ver}/`.
 
 ### `build_mp4_path(entity_root, entity, task, publish_name, version) -> Path`
-MP4 preview path.
+MP4 preview path under `preview/{task}/{publish_name}/{ver}/`.
 
 ### `build_exr_path(entity_root, entity, task, descriptor, rop_name, version) -> Path`
-EXR render path under `publish/render/`.
+EXR render path under `publish/render/{task}/{rop_name}/{ver}/`.
 
 ### `build_usd_cache_path(entity_root, entity, task, descriptor, version) -> Path`
-USD cache path.
+USD cache path under `cache/usd/{task}/{descriptor}/{ver}/` (not indexed by gallery — work cache only).
 
 ### `build_standard_output_paths(publish_dir) -> dict[str, str]`
 Return the conventional gallery output paths for a versioned publish directory.
