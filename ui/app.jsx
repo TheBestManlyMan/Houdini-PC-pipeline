@@ -1,6 +1,16 @@
 /* global React, ReactDOM, TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakColor, TweakToggle, TweakSlider, TweakText */
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
+// ───────────────────────── fullscreen helper ──────────────────────────
+const toggleFullscreen = (el) => {
+  if (!el) return;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
+  } else {
+    (document.exitFullscreen?.() ?? document.webkitExitFullscreen?.());
+  }
+};
+
 // ───────────────────────── format helpers ──────────────────────────
 const versionLabel = (v) => `v${String(v).padStart(3, '0')}`;
 const fmtRelative = (iso) => {
@@ -81,6 +91,10 @@ const Icon = ({ name, size = 14 }) => {
     tag:      <><path d="M2 7V3a1 1 0 011-1h4l7 7-5 5z" {...stroke}/><circle cx="5" cy="5" r="0.6" fill="currentColor"/></>,
     rop:      <><rect x="2" y="6" width="4" height="4" rx="0.5" {...stroke}/><rect x="10" y="6" width="4" height="4" rx="0.5" {...stroke}/><path d="M6 8h4" {...stroke}/></>,
     info:     <><circle cx="8" cy="8" r="6" {...stroke}/><path d="M8 7v4M8 5v0.5" {...stroke}/></>,
+    expand:   <><path d="M3 7V3h4" {...stroke}/><path d="M13 3h-4M13 3v4" {...stroke}/><path d="M3 9v4h4" {...stroke}/><path d="M13 13h-4M13 13v-4" {...stroke}/></>,
+    cube:     <><path d="M8 2l5 3v6l-5 3-5-3V5z" {...stroke}/><path d="M8 2v12M3 5l5 3 5-3" {...stroke}/></>,
+    rotate:   <><path d="M13 8a5 5 0 11-1.5-3.5" {...stroke}/><path d="M11 3l2 2-2 2" {...stroke}/></>,
+    image:    <><rect x="2" y="3" width="12" height="10" rx="1" {...stroke}/><path d="M2 9l3-3 3 3 3-4 3 4" {...stroke}/></>,
   };
   return <svg width={s} height={s} viewBox="0 0 16 16" style={{ display: 'block' }}>{paths[name]}</svg>;
 };
@@ -182,10 +196,73 @@ const WarnPill = ({ warnings }) => {
   );
 };
 
+// ───────────────────────── glb preview (model-viewer) ──────────────────────────
+const GlbPreview = ({ src, entity }) => {
+  const ref = useRef(null);
+  const [progress, setProgress] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const onProg = (e) => setProgress(Math.round((e.detail.totalProgress || 0) * 100));
+    const onLoad = () => setReady(true);
+    const onErr  = (e) => setErr(e.detail?.sourceError?.message || 'Failed to load model');
+    el.addEventListener('progress', onProg);
+    el.addEventListener('load', onLoad);
+    el.addEventListener('error', onErr);
+    return () => {
+      el.removeEventListener('progress', onProg);
+      el.removeEventListener('load', onLoad);
+      el.removeEventListener('error', onErr);
+    };
+  }, [src]);
+
+  return (
+    <div className="glb-preview">
+      <model-viewer
+        ref={ref}
+        src={src}
+        camera-controls
+        interaction-prompt="none"
+        shadow-intensity="1.1"
+        exposure="0.95"
+        environment-image="neutral"
+        camera-orbit="35deg 75deg auto"
+        field-of-view="32deg"
+        style={{
+          width: '100%', height: '100%', display: 'block',
+          background: 'radial-gradient(ellipse at center, oklch(22% 0.01 250), oklch(10% 0.004 250))',
+        }}
+      />
+      <div className="glb-pills">
+        <span className="glb-pill mono">{entity}.glb</span>
+        <span className="glb-pill mono" data-state={ready ? 'ok' : (err ? 'err' : 'loading')}>
+          {ready ? 'loaded' : (err ? 'error' : `${progress}%`)}
+        </span>
+      </div>
+      {!ready && !err && (
+        <div className="glb-overlay">
+          <div className="glb-spinner"/>
+          <div className="mono small muted">Streaming GLB · {progress}%</div>
+        </div>
+      )}
+      {err && (
+        <div className="glb-overlay glb-err">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Couldn't load model</div>
+          <div className="mono small">{err}</div>
+        </div>
+      )}
+      <div className="glb-hint">drag to orbit · scroll to zoom · right-drag to pan</div>
+    </div>
+  );
+};
+
 // ───────────────────────── card ──────────────────────────
 const Card = ({ pub, selected, onSelect, view }) => {
   const [hover, setHover] = useState(false);
   const hasVideo = !!pub.outputs?.mp4;
+  const hasGlb   = !!(pub.real_glb || pub.outputs?.glb);
   const thumb = pub.outputs?.thumbnail;
 
   if (view === 'list') {
@@ -197,6 +274,7 @@ const Card = ({ pub, selected, onSelect, view }) => {
           {thumb ? <img src={thumb} alt=""/> : <div className="no-thumb"/>}
           {hasVideo && hover && <HoverPreview pub={pub} playing={hover}/>}
           {hasVideo && <span className="play-pill"><Icon name="play" size={9}/></span>}
+          {hasGlb && <span className="play-pill" style={{ left: hasVideo ? 32 : 6 }} title="3D proxy available"><Icon name="cube" size={9}/></span>}
         </div>
         <div className="row-main">
           <div className="row-title">
@@ -240,6 +318,7 @@ const Card = ({ pub, selected, onSelect, view }) => {
                 <Icon name="warn" size={11}/>
               </span>
             )}
+            {hasGlb && <span className="play-pill" title="3D proxy available"><Icon name="cube" size={9}/></span>}
             {hasVideo && <span className="play-pill"><Icon name="play" size={9}/></span>}
           </div>
         </div>
@@ -447,6 +526,7 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
   const [copied, setCopied] = useState(false);
   const [previewFrame, setPreviewFrame] = useState(null);
   const [scrubbing, setScrubbing] = useState(false);
+  const previewRef = useRef(null);
 
   // versions = same entity/task/publish_type
   const versions = useMemo(() => {
@@ -473,6 +553,8 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
   }, [pub, allPubs]);
 
   if (!pub) return null;
+
+  const glbSrc = pub.real_glb || pub.outputs?.glb || null;
 
   const copy = () => {
     const path = pub._index_path || pub.outputs?.usd || pub.outputs?.cache || pub.outputs?.frames || '';
@@ -511,15 +593,28 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
       </div>
 
       <div className="detail-preview"
-           onMouseDown={(e) => { setScrubbing(true); onScrub(e); }}
-           onMouseUp={() => setScrubbing(false)}
-           onMouseLeave={() => { setScrubbing(false); setPreviewFrame(null); }}
-           onMouseMove={(e) => scrubbing && onScrub(e)}>
-        {pub.outputs?.thumbnail
-          ? <img src={pub.outputs.thumbnail} alt=""/>
-          : <div className="preview-no">no preview</div>}
-        {pub.outputs?.mp4 && <HoverPreview pub={pub} playing={true}/>}
-        {fs != null && frames > 1 && (
+           ref={previewRef}
+           onMouseDown={glbSrc ? undefined : (e) => { setScrubbing(true); onScrub(e); }}
+           onMouseUp={glbSrc ? undefined : () => setScrubbing(false)}
+           onMouseLeave={glbSrc ? undefined : () => { setScrubbing(false); setPreviewFrame(null); }}
+           onMouseMove={glbSrc ? undefined : (e) => scrubbing && onScrub(e)}>
+        {glbSrc ? (
+          <GlbPreview src={glbSrc} entity={pub.entity}/>
+        ) : (
+          <>
+            {pub.outputs?.thumbnail
+              ? <img src={pub.outputs.thumbnail} alt=""/>
+              : <div className="preview-no">no preview</div>}
+            {pub.outputs?.mp4 && <HoverPreview pub={pub} playing={true}/>}
+          </>
+        )}
+        {(glbSrc || pub.outputs?.thumbnail || pub.outputs?.mp4) && (
+          <button className="preview-fs" title="Fullscreen"
+                  onClick={(e) => { e.stopPropagation(); toggleFullscreen(previewRef.current); }}>
+            <Icon name="expand" size={12}/>
+          </button>
+        )}
+        {fs != null && frames > 1 && !glbSrc && (
           <div className="scrubber">
             <div className="scrub-track">
               <div className="scrub-fill" style={{
@@ -648,14 +743,15 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
               <div className="path-text mono">{pub._index_path}</div>
             </div>
 
-            {(pub.outputs?.mp4 || pub.outputs?.cache || pub.outputs?.usd || pub.outputs?.frames) && (
+            {(pub.outputs?.mp4 || pub.outputs?.cache || pub.outputs?.usd || pub.outputs?.frames || pub.outputs?.glb) && (
               <div className="block">
                 <div className="block-label">Outputs</div>
                 <div className="outputs-list">
-                  {pub.outputs.mp4 && <div className="output-row"><span className="output-key">mp4</span><span className="mono output-val">preview.mp4</span></div>}
+                  {pub.outputs.mp4    && <div className="output-row"><span className="output-key">mp4</span><span className="mono output-val">preview.mp4</span></div>}
                   {pub.outputs.cache  && <div className="output-row"><span className="output-key">cache</span><span className="mono output-val">{pub.outputs.cache.split('/').pop()}</span></div>}
                   {pub.outputs.usd    && <div className="output-row"><span className="output-key">usd</span><span className="mono output-val">{pub.outputs.usd.split('/').pop()}</span></div>}
                   {pub.outputs.frames && <div className="output-row"><span className="output-key">frames</span><span className="mono output-val">{pub.outputs.frames.split('/').pop()}</span></div>}
+                  {pub.outputs.glb    && <div className="output-row"><span className="output-key">proxy glb</span><span className="mono output-val">proxy.glb</span></div>}
                 </div>
               </div>
             )}
@@ -773,8 +869,9 @@ const Topbar = ({ filters, setFilters, view, setView, sort, setSort, count, tota
           <div className="brand-sub">Publish Gallery</div>
         </div>
         <nav className="top-nav">
-          <a className="top-nav-link active" href="Publish Gallery.html">Gallery</a>
-          <a className="top-nav-link" href="Pipeline Manager.html">Manager</a>
+          <a className="top-nav-link active" href="gallery.html">Gallery</a>
+          <a className="top-nav-link" href="pipeline_manager.html">Manager</a>
+          <a className="top-nav-link" href="mobile-review.html">Mobile</a>
         </nav>
       </div>
 

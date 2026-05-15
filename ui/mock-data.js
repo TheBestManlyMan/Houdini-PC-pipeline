@@ -156,12 +156,17 @@
         const fEnd   = isAnimated ? (1001 + 40 + Math.floor(Math.random() * 120)) : 1;
         const hasMp4 = publish_type === 'flipbook' || publish_type === 'render';
 
+        // Asset USD publishes carry a lightweight proxy GLB for browser 3D preview.
+        // Real path: ${verDir}/proxy.glb — mock data uses a public demo asset.
+        const hasProxy = context.type === 'asset' && publish_type === 'usd';
+
         const outputs = {
           thumbnail: swatch(project.hue + (id * 7) % 30, `${entity} · ${task} · ${verName}`, id),
           mp4: hasMp4 ? '__demo__' : '',
           frames: isAnimated ? `${verDir}/${entity}_fx_${task}_${pubName}_${verName}.$F4.${publish_type === 'flipbook' ? 'jpg' : 'exr'}` : '',
           usd:    publish_type === 'usd' ? `${verDir}/${entity}_fx_${task}_${pubName}_${verName}.usd` : '',
           cache:  publish_type === 'cache' ? `${verDir}/${entity}_fx_${task}_${pubName}_${verName}.$F4.bgeo.sc` : '',
+          glb:    hasProxy ? 'https://modelviewer.dev/shared-assets/models/Astronaut.glb' : '',
         };
 
         // Stats
