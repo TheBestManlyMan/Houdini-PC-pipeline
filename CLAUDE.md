@@ -12,9 +12,18 @@ Houdini-PC-pipeline/
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
   server.py                  # FastAPI server — REST API for pipeline management
-  pipeline_manager.html      # Standalone web UI (open directly in browser)
   requirements.txt           # Python dependencies (fastapi, uvicorn)
   CLAUDE.md                  # This file
+  ui/                        # Standalone browser UIs (no build step — open directly)
+    gallery.html             # Publish Gallery entry point
+    pipeline_manager.html    # Pipeline Manager entry point
+    styles.css               # Shared OKLCH token layer + layout
+    app.jsx                  # Publish Gallery React app
+    tweaks-panel.jsx         # Gallery settings panel
+    mock-data.js             # Gallery demo data (v2 index schema)
+    pipeline-manager.jsx     # Pipeline Manager React app
+    pipeline-manager.css     # Pipeline Manager page styles
+    pipeline-mock.js         # Pipeline Manager demo data
   python/
     pipeline/                # Core pipeline package — ALL shared logic lives here
     file_manager.py          # PySide6 File Manager dialog
@@ -58,8 +67,11 @@ Running the tool again while the server is already up just re-opens the browser 
 python server.py
 ```
 
-**Web UI:**
-`pipeline_manager.html` — a single-file standalone React app. Open it directly in a browser (no build step). It talks to the API at `http://127.0.0.1:8765/api`.
+**Web UIs** (open directly in browser — no build step):
+- `ui/gallery.html` — Publish Gallery (three-pane workbench, filters, detail panel)
+- `ui/pipeline_manager.html` — Pipeline Manager (projects, sequences, shots, assets)
+
+Both pages probe `http://127.0.0.1:8765/api` on load and fall back to demo data when the server isn't running.
 
 **API routes (all prefixed `/api`):**
 
