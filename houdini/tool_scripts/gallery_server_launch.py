@@ -1,10 +1,12 @@
 # Shelf tool: Gallery Server
 # Starts the pipeline API server and web gallery, then opens the browser.
-# Prints local and Tailscale URLs to the Houdini console.
+# Ensures Tailscale is running, then prints local and Tailscale URLs.
 
 import os
 import subprocess
 import sys
+import threading
+import time
 import webbrowser
 
 import hou
@@ -18,28 +20,84 @@ if not _root:
     raise EnvironmentError("HOUDINI_PIPELINE_ROOT not set")
 
 _api_server = os.path.join(_root, "python", "api_server.py")
-_web_dir = os.path.join(_root, "web")
+_web_dir    = os.path.join(_root, "web")
 
-LOCAL_API  = "http://localhost:8765"
-LOCAL_WEB  = "http://localhost:5173"
-WEB_PORT   = 5173
+LOCAL_API = "http://localhost:8765"
+LOCAL_WEB = "http://localhost:5173"
+WEB_PORT  = 5173
 
-# ── Get Tailscale IP (best-effort) ──────────────────────────────────────────
+
+# ── Tailscale helpers ────────────────────────────────────────────────────────
+
 def _tailscale_ip():
+    """Return current Tailscale IPv4, or None if not connected."""
     try:
-        result = subprocess.run(
+        r = subprocess.run(
             ["tailscale", "ip", "-4"],
-            capture_output=True, text=True, timeout=3
+            capture_output=True, text=True, timeout=3,
         )
-        ip = result.stdout.strip()
-        if ip and not ip.startswith("no "):
+        ip = r.stdout.strip()
+        if ip and not ip.startswith("no ") and r.returncode == 0:
             return ip
     except Exception:
         pass
     return None
 
-ts_ip = _tailscale_ip()
+
+def _ensure_tailscale():
+    """
+    Make sure Tailscale is connected.  Three attempts in order:
+      1. Already connected → done.
+      2. Daemon running but down → tailscale up (no sudo needed).
+      3. Daemon not running → start service with sudo -n (non-interactive,
+         fails fast if password required rather than blocking forever).
+
+    Returns (ip_or_None, status_string).
+    """
+    # 1. Already up?
+    ip = _tailscale_ip()
+    if ip:
+        return ip, "already connected"
+
+    # 2. Daemon running, just not connected.
+    print("[Pipeline] Tailscale not connected — running 'tailscale up'…")
+    try:
+        subprocess.run(
+            ["tailscale", "up"],
+            capture_output=True, text=True, timeout=15,
+        )
+        ip = _tailscale_ip()
+        if ip:
+            return ip, "reconnected"
+    except subprocess.TimeoutExpired:
+        print("[Pipeline] 'tailscale up' timed out.")
+    except Exception as e:
+        print(f"[Pipeline] 'tailscale up' failed: {e}")
+
+    # 3. Daemon may not be running — try systemctl (sudo -n = non-interactive).
+    print("[Pipeline] Attempting to start tailscaled service…")
+    try:
+        subprocess.run(
+            ["sudo", "-n", "systemctl", "start", "tailscaled"],
+            capture_output=True, text=True, timeout=10,
+        )
+        subprocess.run(
+            ["tailscale", "up"],
+            capture_output=True, text=True, timeout=15,
+        )
+        ip = _tailscale_ip()
+        if ip:
+            return ip, "service started"
+    except Exception as e:
+        print(f"[Pipeline] Could not start tailscaled: {e}")
+
+    return None, "unavailable"
+
+
+# ── Ensure Tailscale ─────────────────────────────────────────────────────────
+ts_ip, ts_status = _ensure_tailscale()
 ts_url = f"http://{ts_ip}:{WEB_PORT}" if ts_ip else None
+print(f"[Pipeline] Tailscale: {ts_ip or 'not connected'} ({ts_status})")
 
 # ── Start API server ─────────────────────────────────────────────────────────
 try:
@@ -69,20 +127,18 @@ print(f"[Pipeline] Local:     {LOCAL_WEB}")
 if ts_url:
     print(f"[Pipeline] Tailscale: {ts_url}")
 else:
-    print("[Pipeline] Tailscale: not connected (run 'sudo tailscale up')")
+    print("[Pipeline] Tailscale: not available — run: sudo tailscale up")
 
-# ── Open browser (give servers a moment to start) ────────────────────────────
-import threading
-def _open():
-    import time
+# ── Open browser ─────────────────────────────────────────────────────────────
+def _open_browser():
     time.sleep(2)
     webbrowser.open(LOCAL_WEB)
-threading.Thread(target=_open, daemon=True).start()
+threading.Thread(target=_open_browser, daemon=True).start()
 
 # ── Summary popup ─────────────────────────────────────────────────────────────
 lines = [f"Gallery started.\n\nLocal:  {LOCAL_WEB}"]
 if ts_url:
     lines.append(f"Tailscale: {ts_url}")
 else:
-    lines.append("Tailscale: not connected")
+    lines.append("Tailscale: not available\nRun: sudo tailscale up")
 hou.ui.displayMessage("\n".join(lines), title="Pipeline Gallery")
