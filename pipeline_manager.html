@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FX Pipeline Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #0d0f12;
+  --bg1:      #13161b;
+  --bg2:      #1a1e25;
+  --bg3:      #222730;
+  --border:   #2a2f3a;
+  --border2:  #353c4a;
+  --text:     #c8cdd8;
+  --text2:    #8891a4;
+  --text3:    #555e70;
+  --accent:   #e8a84a;
+  --accent2:  color-mix(in oklch, var(--accent) 20%, transparent);
+  --red:      #e05c5c;
+  --red2:     color-mix(in oklch, var(--red) 15%, transparent);
+  --green:    #5ce08a;
+  --green2:   color-mix(in oklch, var(--green) 15%, transparent);
+  --blue:     #5ca8e0;
+  --blue2:    color-mix(in oklch, var(--blue) 15%, transparent);
+  --purple:   #a05ce0;
+  --mono:     'IBM Plex Mono', monospace;
+  --sans:     'IBM Plex Sans', sans-serif;
+  --r:        4px;
+  --r2:       8px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+input, select { font-family: inherit; }
+
+/* ── Layout ── */
+.shell { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+.logo {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 13px; font-weight: 600;
+  color: var(--accent); letter-spacing: .02em;
+}
+.logo-mark {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: var(--bg3); border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.topbar-sep { flex: 1; }
+.server-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+.server-label { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+.body { display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar {
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-proj-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 8px;
+  font-size: 10px; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text3);
+}
+.sidebar-list { flex: 1; overflow-y: auto; padding: 4px 8px 8px; }
+.sidebar-list::-webkit-scrollbar { width: 4px; }
+.sidebar-list::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 2px; }
+.proj-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: var(--r);
+  cursor: pointer; color: var(--text2);
+  transition: background .1s, color .1s;
+  position: relative;
+}
+.proj-item:hover { background: var(--bg2); color: var(--text); }
+.proj-item.active { background: var(--accent2); color: var(--text); }
+.proj-item.active::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 2px; background: var(--accent); border-radius: 2px;
+}
+.proj-name { flex: 1; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-folder { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+.proj-del {
+  opacity: 0; width: 18px; height: 18px; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--red); font-size: 12px;
+  transition: opacity .1s, background .1s;
+}
+.proj-item:hover .proj-del { opacity: 1; }
+.proj-del:hover { background: var(--red2); }
+
+/* ── Main content ── */
+.content { overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── Tabs ── */
+.tabs {
+  display: flex; gap: 0;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+.tab {
+  padding: 12px 16px; font-size: 12px; font-weight: 500;
+  color: var(--text3); border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: color .1s, border-color .1s;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text2); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* ── Tab panels ── */
+.panel { flex: 1; overflow-y: auto; padding: 20px; }
+.panel::-webkit-scrollbar { width: 6px; }
+.panel::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+
+.panel-empty {
+  height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 8px; color: var(--text3);
+}
+.panel-empty-icon { font-size: 32px; opacity: .4; }
+.panel-empty-title { font-size: 14px; color: var(--text2); }
+.panel-empty-sub { font-size: 12px; }
+
+/* ── Section headers ── */
+.section-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.section-title {
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text3);
+}
+.section-rule { flex: 1; height: 1px; background: var(--border); }
+
+/* ── Cards ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px; margin-bottom: 28px;
+}
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  position: relative; cursor: default;
+  transition: border-color .12s;
+}
+.card:hover { border-color: var(--border2); }
+.card-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.card-sub { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+.card-actions {
+  display: flex; gap: 4px; margin-top: 8px;
+}
+.card-del {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: var(--r);
+  font-size: 11px; color: var(--red);
+  background: var(--red2); transition: background .1s;
+}
+.card-del:hover { background: color-mix(in oklch, var(--red) 25%, transparent); }
+
+/* ── Add card ── */
+.add-card {
+  background: transparent;
+  border: 1px dashed var(--border2);
+  border-radius: var(--r2);
+  padding: 12px 14px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; cursor: pointer; color: var(--text3);
+  font-size: 12px;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.add-card:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent2);
+}
+
+/* ── Inline form ── */
+.inline-form {
+  background: var(--bg2);
+  border: 1px solid var(--accent);
+  border-radius: var(--r2);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.inline-form-row { display: flex; gap: 6px; }
+.field {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  padding: 5px 10px;
+  color: var(--text); font-size: 12px;
+  outline: none;
+  transition: border-color .12s;
+}
+.field:focus { border-color: var(--accent); }
+.field::placeholder { color: var(--text3); }
+.btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: var(--r);
+  font-size: 12px; font-weight: 500;
+  transition: background .1s;
+}
+.btn-primary {
+  background: var(--accent); color: #1a0f00; font-weight: 600;
+}
+.btn-primary:hover { background: color-mix(in oklch, var(--accent) 85%, white); }
+.btn-ghost {
+  background: var(--bg3); color: var(--text2);
+  border: 1px solid var(--border2);
+}
+.btn-ghost:hover { background: var(--border); color: var(--text); }
+.btn-danger {
+  background: var(--red2); color: var(--red);
+  border: 1px solid transparent;
+}
+.btn-danger:hover { background: color-mix(in oklch, var(--red) 25%, transparent); }
+
+/* ── Shots panel: seq accordion ── */
+.seq-block { margin-bottom: 20px; }
+.seq-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: var(--r);
+  background: var(--bg2); border: 1px solid var(--border);
+  cursor: pointer; margin-bottom: 8px;
+  transition: border-color .1s;
+}
+.seq-head:hover { border-color: var(--border2); }
+.seq-label {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--blue); flex: 1;
+}
+.seq-count { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+.seq-del { color: var(--red); font-size: 13px; padding: 2px 6px; border-radius: 3px; }
+.seq-del:hover { background: var(--red2); }
+.shot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px; padding-left: 12px;
+}
+.shot-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 8px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px;
+}
+.shot-name { font-family: var(--mono); font-size: 12px; }
+.shot-del { opacity: 0; color: var(--red); font-size: 12px; border-radius: 3px; padding: 1px 5px; }
+.shot-card:hover .shot-del { opacity: 1; }
+.shot-del:hover { background: var(--red2); }
+
+/* ── Asset type groups ── */
+.asset-type-block { margin-bottom: 24px; }
+.asset-type-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.asset-type-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--purple);
+  font-family: var(--mono);
+}
+.asset-type-del { color: var(--red); font-size: 12px; padding: 2px 6px; border-radius: 3px; }
+.asset-type-del:hover { background: var(--red2); }
+
+/* ── Toast ── */
+.toast-wrap {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 999; pointer-events: none;
+}
+.toast {
+  padding: 8px 14px; border-radius: var(--r2);
+  font-size: 12px; font-weight: 500;
+  background: var(--bg2); border: 1px solid var(--border2);
+  color: var(--text);
+  animation: toast-in .2s ease;
+  pointer-events: all;
+}
+.toast.ok { border-color: var(--green); color: var(--green); background: var(--green2); }
+.toast.err { border-color: var(--red); color: var(--red); background: var(--red2); }
+@keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+
+/* ── Confirm dialog ── */
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.dialog {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: var(--r2); padding: 24px;
+  min-width: 320px; display: flex; flex-direction: column; gap: 16px;
+}
+.dialog-title { font-size: 14px; font-weight: 600; }
+.dialog-body { font-size: 12px; color: var(--text2); line-height: 1.5; }
+.dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.dialog-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+const API = "http://127.0.0.1:8765/api";
+
+// ── API helpers ──────────────────────────────────────────────────────────
+
+async function api(method, path, body) {
+  const res = await fetch(API + path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+const get  = (path)        => api("GET",    path);
+const post = (path, body)  => api("POST",   path, body);
+const del  = (path, query) => api("DELETE", path + (query ? "?" + new URLSearchParams(query) : ""));
+
+// ── Toast ────────────────────────────────────────────────────────────────
+
+let _addToast = null;
+
+function ToastContainer() {
+  const [toasts, setToasts] = useState([]);
+  _addToast = (msg, type = "ok") => {
+    const id = Date.now();
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000);
+  };
+  return (
+    <div className="toast-wrap">
+      {toasts.map(t => (
+        <div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>
+      ))}
+    </div>
+  );
+}
+
+const toast  = (msg) => _addToast?.(msg, "ok");
+const toastE = (msg) => _addToast?.(msg, "err");
+
+// ── Confirm dialog ───────────────────────────────────────────────────────
+
+function ConfirmDialog({ title, body, onConfirm, onCancel, showDeleteFiles }) {
+  const [deleteFiles, setDeleteFiles] = useState(false);
+  return (
+    <div className="overlay" onClick={onCancel}>
+      <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="dialog-title">{title}</div>
+        <div className="dialog-body">{body}</div>
+        {showDeleteFiles && (
+          <label className="dialog-check">
+            <input type="checkbox" checked={deleteFiles}
+              onChange={e => setDeleteFiles(e.target.checked)} />
+            Also delete files from disk
+          </label>
+        )}
+        <div className="dialog-actions">
+          <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-danger" onClick={() => onConfirm(deleteFiles)}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useConfirm() {
+  const [state, setState] = useState(null);
+  const confirm = useCallback((title, body, showDeleteFiles = true) => {
+    return new Promise(resolve => {
+      setState({ title, body, showDeleteFiles, resolve });
+    });
+  }, []);
+  const dialog = state ? (
+    <ConfirmDialog
+      title={state.title} body={state.body}
+      showDeleteFiles={state.showDeleteFiles}
+      onConfirm={(deleteFiles) => { setState(null); state.resolve({ confirmed: true, deleteFiles }); }}
+      onCancel={() => { setState(null); state.resolve({ confirmed: false }); }}
+    />
+  ) : null;
+  return [confirm, dialog];
+}
+
+// ── Inline add form ──────────────────────────────────────────────────────
+
+function AddForm({ fields, onSubmit, onCancel, submitLabel = "Add" }) {
+  const [values, setValues] = useState(() => Object.fromEntries(fields.map(f => [f.key, ""])));
+  const firstRef = useRef(null);
+  useEffect(() => firstRef.current?.focus(), []);
+
+  const handleKey = (e) => { if (e.key === "Escape") onCancel(); };
+  const handleSubmit = () => {
+    for (const f of fields) {
+      if (f.required !== false && !values[f.key].trim()) {
+        toastE(`${f.label} is required.`); return;
+      }
+    }
+    onSubmit(values);
+  };
+
+  return (
+    <div className="inline-form" onKeyDown={handleKey}>
+      <div className="inline-form-row">
+        {fields.map((f, i) => (
+          <input key={f.key} ref={i === 0 ? firstRef : null}
+            className="field" placeholder={f.placeholder || f.label}
+            value={values[f.key]}
+            onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          />
+        ))}
+        <button className="btn btn-primary" onClick={handleSubmit}>{submitLabel}</button>
+        <button className="btn btn-ghost" onClick={onCancel}>✕</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Projects sidebar ─────────────────────────────────────────────────────
+
+function ProjectsSidebar({ projects, activeFolder, onSelect, onAdd, onDelete }) {
+  return (
+    <div className="sidebar">
+      <div className="sidebar-proj-header">
+        Projects
+        <button className="btn btn-ghost" style={{ padding: "2px 8px", fontSize: 11 }}
+          onClick={onAdd}>+ New</button>
+      </div>
+      <div className="sidebar-list">
+        {projects.map(p => (
+          <div key={p.folder}
+            className={`proj-item ${activeFolder === p.folder ? "active" : ""}`}
+            onClick={() => onSelect(p.folder)}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="proj-name">{p.name}</div>
+              <div className="proj-folder">{p.folder}</div>
+            </div>
+            <button className="proj-del" onClick={e => { e.stopPropagation(); onDelete(p); }}>✕</button>
+          </div>
+        ))}
+        {projects.length === 0 && (
+          <div style={{ padding: "12px 8px", color: "var(--text3)", fontSize: 12 }}>
+            No projects yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Sequences & Shots tab ────────────────────────────────────────────────
+
+function ShotsTab({ folder }) {
+  const [sequences, setSequences] = useState([]);
+  const [shots, setShots] = useState({});
+  const [openSeqs, setOpenSeqs] = useState(new Set());
+  const [addingSeq, setAddingSeq] = useState(false);
+  const [addingShot, setAddingShot] = useState(null); // seq name
+  const [confirm, confirmDialog] = useConfirm();
+
+  const loadSeqs = useCallback(async () => {
+    const seqs = await get(`/projects/${folder}/sequences`);
+    setSequences(seqs);
+    // Auto-open all
+    setOpenSeqs(new Set(seqs));
+  }, [folder]);
+
+  useEffect(() => { loadSeqs(); }, [loadSeqs]);
+
+  const loadShots = useCallback(async (seq) => {
+    const s = await get(`/projects/${folder}/sequences/${seq}/shots`);
+    setShots(prev => ({ ...prev, [seq]: s }));
+  }, [folder]);
+
+  useEffect(() => {
+    sequences.forEach(seq => loadShots(seq));
+  }, [sequences, loadShots]);
+
+  const toggleSeq = (seq) => {
+    setOpenSeqs(prev => {
+      const n = new Set(prev);
+      n.has(seq) ? n.delete(seq) : n.add(seq);
+      return n;
+    });
+  };
+
+  const handleAddSeq = async ({ seq }) => {
+    try {
+      await post(`/projects/${folder}/sequences`, { seq });
+      toast(`Sequence ${seq} created.`);
+      setAddingSeq(false);
+      loadSeqs();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleDeleteSeq = async (seq) => {
+    const r = await confirm(`Delete sequence ${seq}?`,
+      `This will remove ${seq} from the registry. Shot folders can optionally be deleted.`);
+    if (!r.confirmed) return;
+    try {
+      await del(`/projects/${folder}/sequences/${seq}`, r.deleteFiles ? { delete_files: true } : {});
+      toast(`Sequence ${seq} deleted.`);
+      loadSeqs();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleAddShot = async (seq, { shot }) => {
+    try {
+      await post(`/projects/${folder}/sequences/${seq}/shots`, { shot });
+      toast(`Shot ${shot} created.`);
+      setAddingShot(null);
+      loadShots(seq);
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleDeleteShot = async (seq, shot) => {
+    const r = await confirm(`Delete shot ${shot}?`,
+      `Remove ${seq}/${shot} from the project.`);
+    if (!r.confirmed) return;
+    try {
+      await del(`/projects/${folder}/sequences/${seq}/shots/${shot}`,
+        r.deleteFiles ? { delete_files: true } : {});
+      toast(`Shot ${shot} deleted.`);
+      loadShots(seq);
+    } catch (e) { toastE(e.message); }
+  };
+
+  return (
+    <div className="panel">
+      {confirmDialog}
+      <div className="section-head">
+        <span className="section-title">Sequences & Shots</span>
+        <span className="section-rule"/>
+        <button className="btn btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
+          onClick={() => setAddingSeq(true)}>+ Sequence</button>
+      </div>
+
+      {addingSeq && (
+        <div style={{ marginBottom: 12 }}>
+          <AddForm
+            fields={[{ key: "seq", label: "Sequence", placeholder: "e.g. SQ010" }]}
+            onSubmit={handleAddSeq}
+            onCancel={() => setAddingSeq(false)}
+          />
+        </div>
+      )}
+
+      {sequences.length === 0 && !addingSeq && (
+        <div className="panel-empty" style={{ height: "auto", padding: "40px 0" }}>
+          <div className="panel-empty-icon">🎬</div>
+          <div className="panel-empty-title">No sequences yet</div>
+          <div className="panel-empty-sub">Add a sequence to get started.</div>
+        </div>
+      )}
+
+      {sequences.map(seq => (
+        <div key={seq} className="seq-block">
+          <div className="seq-head" onClick={() => toggleSeq(seq)}>
+            <span style={{ color: "var(--text3)", fontSize: 11 }}>
+              {openSeqs.has(seq) ? "▾" : "▸"}
+            </span>
+            <span className="seq-label">{seq}</span>
+            <span className="seq-count">{(shots[seq] || []).length} shots</span>
+            <button className="seq-del" onClick={e => { e.stopPropagation(); handleDeleteSeq(seq); }}>✕</button>
+          </div>
+
+          {openSeqs.has(seq) && (
+            <div className="shot-grid">
+              {(shots[seq] || []).map(shot => (
+                <div key={shot} className="shot-card">
+                  <span className="shot-name">{shot}</span>
+                  <button className="shot-del" onClick={() => handleDeleteShot(seq, shot)}>✕</button>
+                </div>
+              ))}
+              {addingShot === seq ? (
+                <AddForm
+                  fields={[{ key: "shot", label: "Shot", placeholder: "e.g. 0010" }]}
+                  onSubmit={(v) => handleAddShot(seq, v)}
+                  onCancel={() => setAddingShot(null)}
+                />
+              ) : (
+                <button className="add-card" onClick={() => setAddingShot(seq)}>
+                  + Shot
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Assets tab ───────────────────────────────────────────────────────────
+
+function AssetsTab({ folder }) {
+  const [assets, setAssets] = useState({});
+  const [addingType, setAddingType] = useState(false);
+  const [addingAsset, setAddingAsset] = useState(null);
+  const [confirm, confirmDialog] = useConfirm();
+
+  const load = useCallback(async () => {
+    const data = await get(`/projects/${folder}/assets`);
+    setAssets(data);
+  }, [folder]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAddType = async ({ asset_type }) => {
+    try {
+      await post(`/projects/${folder}/asset-types`, { asset_type });
+      toast(`Asset type '${asset_type}' created.`);
+      setAddingType(false);
+      load();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleDeleteType = async (asset_type) => {
+    const r = await confirm(`Delete asset type '${asset_type}'?`,
+      `This removes the entire '${asset_type}' category and all its assets.`);
+    if (!r.confirmed) return;
+    try {
+      await del(`/projects/${folder}/asset-types/${asset_type}`,
+        r.deleteFiles ? { delete_files: true } : {});
+      toast(`Asset type '${asset_type}' deleted.`);
+      load();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleAddAsset = async (asset_type, { asset }) => {
+    try {
+      await post(`/projects/${folder}/assets/${asset_type}`, { asset });
+      toast(`Asset '${asset}' created.`);
+      setAddingAsset(null);
+      load();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleDeleteAsset = async (asset_type, asset) => {
+    const r = await confirm(`Delete asset '${asset}'?`,
+      `Remove ${asset_type}/${asset} from the project.`);
+    if (!r.confirmed) return;
+    try {
+      await del(`/projects/${folder}/assets/${asset_type}/${asset}`,
+        r.deleteFiles ? { delete_files: true } : {});
+      toast(`Asset '${asset}' deleted.`);
+      load();
+    } catch (e) { toastE(e.message); }
+  };
+
+  const typeEntries = Object.entries(assets);
+
+  return (
+    <div className="panel">
+      {confirmDialog}
+      <div className="section-head">
+        <span className="section-title">Asset Types & Assets</span>
+        <span className="section-rule"/>
+        <button className="btn btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
+          onClick={() => setAddingType(true)}>+ Type</button>
+      </div>
+
+      {addingType && (
+        <div style={{ marginBottom: 16 }}>
+          <AddForm
+            fields={[{ key: "asset_type", label: "Asset Type", placeholder: "e.g. character, prop, environment" }]}
+            onSubmit={handleAddType}
+            onCancel={() => setAddingType(false)}
+          />
+        </div>
+      )}
+
+      {typeEntries.length === 0 && !addingType && (
+        <div className="panel-empty" style={{ height: "auto", padding: "40px 0" }}>
+          <div className="panel-empty-icon">📦</div>
+          <div className="panel-empty-title">No asset types yet</div>
+          <div className="panel-empty-sub">Add a type like 'character' or 'prop'.</div>
+        </div>
+      )}
+
+      {typeEntries.map(([type, assetList]) => (
+        <div key={type} className="asset-type-block">
+          <div className="asset-type-head">
+            <span className="asset-type-label">{type}</span>
+            <span className="section-rule"/>
+            <button className="asset-type-del" onClick={() => handleDeleteType(type)}>✕ type</button>
+          </div>
+          <div className="card-grid">
+            {assetList.map(asset => (
+              <div key={asset} className="card">
+                <div className="card-name">{asset}</div>
+                <div className="card-sub">{type}/{asset}</div>
+                <div className="card-actions">
+                  <button className="card-del btn" onClick={() => handleDeleteAsset(type, asset)}>
+                    ✕ Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            {addingAsset === type ? (
+              <AddForm
+                fields={[{ key: "asset", label: "Asset name", placeholder: "e.g. hero" }]}
+                onSubmit={(v) => handleAddAsset(type, v)}
+                onCancel={() => setAddingAsset(null)}
+              />
+            ) : (
+              <button className="add-card" onClick={() => setAddingAsset(type)}>
+                + Asset
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Overview tab ─────────────────────────────────────────────────────────
+
+function OverviewTab({ project, folder }) {
+  const [stats, setStats] = useState({ sequences: 0, shots: 0, assets: 0, publishes: 0 });
+
+  useEffect(() => {
+    if (!folder) return;
+    Promise.all([
+      get(`/projects/${folder}/sequences`),
+      get(`/projects/${folder}/assets`),
+      get(`/publishes?project=${project?.name || ""}`),
+    ]).then(([seqs, assets, pubs]) => {
+      const assetCount = Object.values(assets).reduce((s, a) => s + a.length, 0);
+      setStats({ sequences: seqs.length, assets: assetCount, publishes: pubs.length });
+    }).catch(() => {});
+  }, [folder, project]);
+
+  if (!project) return null;
+
+  const stat = (label, value, color) => (
+    <div style={{
+      background: "var(--bg2)", border: "1px solid var(--border)",
+      borderRadius: "var(--r2)", padding: "16px 20px",
+      display: "flex", flexDirection: "column", gap: 4,
+    }}>
+      <div style={{ fontFamily: "var(--mono)", fontSize: 28, fontWeight: 600, color }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: ".07em" }}>
+        {label}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="panel">
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>{project.name}</div>
+        <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text3)" }}>
+          {project.folder} &nbsp;·&nbsp; {project.fps}fps &nbsp;·&nbsp; {project.resolution}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px,1fr))", gap: 10, marginBottom: 24 }}>
+        {stat("Sequences", stats.sequences, "var(--blue)")}
+        {stat("Assets", stats.assets, "var(--purple)")}
+        {stat("Publishes", stats.publishes, "var(--accent)")}
+      </div>
+      <div className="section-head">
+        <span className="section-title">Project Info</span>
+        <span className="section-rule"/>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "8px 16px", fontSize: 12 }}>
+        {[
+          ["Name", project.name],
+          ["Folder", project.folder],
+          ["FPS", project.fps],
+          ["Resolution", project.resolution],
+          ["Sequences", project.sequences?.join(", ") || "—"],
+        ].map(([k, v]) => (
+          <React.Fragment key={k}>
+            <div style={{ color: "var(--text3)" }}>{k}</div>
+            <div style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{v}</div>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Add Project form ─────────────────────────────────────────────────────
+
+function AddProjectForm({ onSubmit, onCancel }) {
+  const [name, setName] = useState("");
+  const [fps, setFps] = useState("24");
+  const [res, setRes] = useState("1920x1080");
+  const ref = useRef(null);
+  useEffect(() => ref.current?.focus(), []);
+
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  const submit = () => {
+    if (!name.trim()) { toastE("Project name is required."); return; }
+    onSubmit({ name: name.trim(), folder: slug, fps: parseInt(fps), resolution: res });
+  };
+
+  return (
+    <div className="overlay" onClick={onCancel}>
+      <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="dialog-title">New Project</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input ref={ref} className="field" placeholder="Project name"
+            value={name} onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && submit()} />
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text3)" }}>
+            Folder: {slug || "—"}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input className="field" placeholder="FPS" style={{ width: 70 }}
+              value={fps} onChange={e => setFps(e.target.value)} />
+            <input className="field" placeholder="Resolution"
+              value={res} onChange={e => setRes(e.target.value)} />
+          </div>
+        </div>
+        <div className="dialog-actions">
+          <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" onClick={submit}>Create Project</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App ──────────────────────────────────────────────────────────────────
+
+const TABS = ["Overview", "Shots", "Assets"];
+
+function App() {
+  const [projects, setProjects] = useState([]);
+  const [activeFolder, setActiveFolder] = useState(null);
+  const [tab, setTab] = useState("Overview");
+  const [addingProject, setAddingProject] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const data = await get("/projects");
+      setProjects(data);
+      if (data.length > 0 && !activeFolder) setActiveFolder(data[0].folder);
+    } catch (e) { toastE("Server not reachable — is it running?"); }
+  }, [activeFolder]);
+
+  useEffect(() => { loadProjects(); }, []);
+
+  const activeProject = projects.find(p => p.folder === activeFolder) || null;
+
+  const handleAddProject = async (body) => {
+    try {
+      await post("/projects", body);
+      toast(`Project '${body.name}' created.`);
+      setAddingProject(false);
+      await loadProjects();
+      setActiveFolder(body.folder);
+    } catch (e) { toastE(e.message); }
+  };
+
+  const handleDeleteProject = async (proj) => {
+    const r = await confirm(
+      `Delete project '${proj.name}'?`,
+      `This will remove '${proj.folder}' from the registry.`,
+      true
+    );
+    if (!r.confirmed) return;
+    try {
+      await del(`/projects/${proj.folder}`, r.deleteFiles ? { delete_files: true } : {});
+      toast(`Project '${proj.name}' deleted.`);
+      setActiveFolder(null);
+      loadProjects();
+    } catch (e) { toastE(e.message); }
+  };
+
+  return (
+    <div className="shell">
+      {confirmDialog}
+      {addingProject && (
+        <AddProjectForm
+          onSubmit={handleAddProject}
+          onCancel={() => setAddingProject(false)}
+        />
+      )}
+
+      <div className="topbar">
+        <div className="logo">
+          <div className="logo-mark">⬡</div>
+          FX Pipeline Manager
+        </div>
+        <div className="topbar-sep"/>
+        <div className="server-dot"/>
+        <span className="server-label">localhost:8765</span>
+      </div>
+
+      <div className="body">
+        <ProjectsSidebar
+          projects={projects}
+          activeFolder={activeFolder}
+          onSelect={(f) => { setActiveFolder(f); setTab("Overview"); }}
+          onAdd={() => setAddingProject(true)}
+          onDelete={handleDeleteProject}
+        />
+
+        <div className="content">
+          {!activeProject ? (
+            <div className="panel-empty" style={{ height: "100%" }}>
+              <div className="panel-empty-icon">📁</div>
+              <div className="panel-empty-title">No project selected</div>
+              <div className="panel-empty-sub">Create or select a project from the sidebar.</div>
+            </div>
+          ) : (
+            <>
+              <div className="tabs">
+                {TABS.map(t => (
+                  <button key={t} className={`tab ${tab === t ? "active" : ""}`}
+                    onClick={() => setTab(t)}>{t}</button>
+                ))}
+              </div>
+              {tab === "Overview" && <OverviewTab project={activeProject} folder={activeFolder}/>}
+              {tab === "Shots"    && <ShotsTab    folder={activeFolder}/>}
+              {tab === "Assets"   && <AssetsTab   folder={activeFolder}/>}
+            </>
+          )}
+        </div>
+      </div>
+
+      <ToastContainer/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

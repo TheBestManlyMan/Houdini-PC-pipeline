@@ -11,9 +11,12 @@ Houdini-PC-pipeline/
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
+  server.py                  # FastAPI server — REST API for pipeline management
+  pipeline_manager.html      # Standalone web UI (open directly in browser)
+  requirements.txt           # Python dependencies (fastapi, uvicorn)
   CLAUDE.md                  # This file
   python/
-    pipeline.py              # Core utility — ALL shared logic lives here
+    pipeline/                # Core pipeline package — ALL shared logic lives here
     file_manager.py          # PySide6 File Manager dialog
   houdini/
     tool_scripts/            # Shelf tool button scripts
@@ -23,6 +26,63 @@ Houdini-PC-pipeline/
     test_pipeline.py         # Unit tests for pipeline.py
   .gitignore
 ```
+
+## Dependencies
+
+Install with:
+
+```bash
+pip install -r requirements.txt
+```
+
+| Package | Purpose |
+|---------|---------|
+| `fastapi` | REST API framework for `server.py` |
+| `uvicorn[standard]` | ASGI server that runs FastAPI inside Houdini via threading |
+
+These are only needed to run `server.py`. The rest of the pipeline (publisher, file manager, etc.) has no extra dependencies beyond what Houdini ships with.
+
+## Pipeline Manager Server
+
+A local FastAPI server that exposes a REST API for managing projects, sequences, shots, and assets via a browser-based UI.
+
+**Port:** `http://127.0.0.1:8765`
+
+**How to start (from Houdini):**
+Run the **Pipeline Manager** shelf tool — script at `houdini/tool_scripts/pipeline_manager_launch.py`.
+It starts the server in a background daemon thread and opens the browser automatically.
+Running the tool again while the server is already up just re-opens the browser tab.
+
+**How to start (standalone, outside Houdini):**
+```bash
+python server.py
+```
+
+**Web UI:**
+`pipeline_manager.html` — a single-file standalone React app. Open it directly in a browser (no build step). It talks to the API at `http://127.0.0.1:8765/api`.
+
+**API routes (all prefixed `/api`):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/projects` | List all projects |
+| POST | `/projects` | Create project |
+| DELETE | `/projects/{folder}` | Delete project (optional `?delete_files=true`) |
+| GET | `/projects/{folder}/sequences` | List sequences |
+| POST | `/projects/{folder}/sequences` | Add sequence |
+| DELETE | `/projects/{folder}/sequences/{seq}` | Delete sequence |
+| GET | `/projects/{folder}/sequences/{seq}/shots` | List shots |
+| POST | `/projects/{folder}/sequences/{seq}/shots` | Create shot (makes work dirs) |
+| DELETE | `/projects/{folder}/sequences/{seq}/shots/{shot}` | Delete shot |
+| GET | `/projects/{folder}/assets` | List assets grouped by type |
+| POST | `/projects/{folder}/asset-types` | Create asset type directory |
+| DELETE | `/projects/{folder}/asset-types/{asset_type}` | Delete asset type |
+| POST | `/projects/{folder}/assets/{asset_type}` | Create asset (makes work dirs) |
+| DELETE | `/projects/{folder}/assets/{asset_type}/{asset}` | Delete asset |
+| GET | `/publishes` | List publishes (optional `?project=name`) |
+| POST | `/publishes/rebuild` | Rebuild publish index |
+
+**Note:** `pipeline_web/dist/` does not exist (no React build step). The server's static file mount is guarded by an `if _WEB_DIST.exists()` check, so the server starts cleanly without it. Use `pipeline_manager.html` instead.
 
 ## Workflow — collaborating with Claude
 
