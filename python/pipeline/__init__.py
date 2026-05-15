@@ -107,6 +107,18 @@ from .metadata import (
     write_publish_metadata,
 )
 
+# Publish schema + product builder
+from .publish_schema import (
+    PublishProduct,
+    PublishPaths,
+    Representation,
+    Preview,
+    PublishAudit,
+    PublishStats,
+    SCHEMA_VERSION as PUBLISH_SCHEMA_VERSION,
+)
+from .publish_product import build_publish_product
+
 # Validation
 from .validation import (
     validate_entity_name,
@@ -161,6 +173,10 @@ __all__ = [
     # metadata
     "build_metadata", "write_metadata", "read_metadata",
     "update_metadata_outputs", "write_publish_metadata",
+    # publish schema + builder
+    "PublishProduct", "PublishPaths", "Representation", "Preview",
+    "PublishAudit", "PublishStats", "PUBLISH_SCHEMA_VERSION",
+    "build_publish_product",
     # validation
     "validate_entity_name", "validate_task_name", "validate_publish_type",
     "validate_context", "validate_version", "validate_publish",

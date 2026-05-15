@@ -679,23 +679,46 @@ class _AssetTab(QWidget):
         except RuntimeError as e:
             logger.warning("Hip snapshot skipped: %s", e)
 
+        published_by = os.getenv("USER", "unknown")
+        published_at = datetime.datetime.now().isoformat()
+
+        # Determine preview dir (shared across all ROPs in this publish)
+        preview_dir = Path(preview_result["jpg_path"]).parent if preview_result else None
+        preview_frame_start = preview_result["first_frame"] if preview_result else None
+        preview_frame_end   = preview_result["last_frame"]  if preview_result else None
+
         for node, fmt, animated, target in published_paths:
             pub_dir = target.parent
-            metadata = {
-                "schema_version": 1,
+
+            # Get ROP frame range for animated geo sequences
+            fs = fe = None
+            if animated:
+                fs, fe = _rop_frame_range(node)
+
+            ctx = {
                 "entity": entity,
                 "task": task,
                 "publish_name": publish_name,
-                "fmt": fmt,
                 "version": version,
+                "product_type": "asset",
                 "animated": animated,
-                "published_by": os.getenv("USER", "unknown"),
-                "published_at": datetime.datetime.now().isoformat(),
-                "description": description,
+                "frame_start": fs,
+                "frame_end": fe,
+                "published_by": published_by,
+                "published_at": published_at,
                 "hip_snapshot": str(snapshot_path) if snapshot_path else None,
-                "preview_mp4": str(mp4_path) if mp4_path else None,
+                "preview_dir": preview_dir,
+                "expect_mp4": preview_result is not None and animated,
             }
-            pipeline.write_publish_metadata(pub_dir, metadata)
+
+            try:
+                product = pipeline.build_publish_product(pub_dir, ctx)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Publish validation failed for {node.name()}:\n{exc}"
+                ) from exc
+
+            pipeline.write_metadata(pub_dir, product.to_dict())
 
         self._set_status(
             f"Published v{version:03d} — {len(published_paths)} ROP(s) done.", "#4e4"
@@ -924,19 +947,27 @@ class _FlipbookTab(QWidget):
         except Exception as e:
             logger.warning("Hip snapshot skipped: %s", e)
 
-        pipeline.write_publish_metadata(mp4_path.parent, {
-            "schema_version": 1,
+        ctx = {
             "entity": entity,
             "task": task,
             "publish_name": "flipbook",
             "version": ver,
-            "published_by": os.getenv("USER", "unknown"),
-            "published_at": datetime.datetime.now().isoformat(),
-            "description": description,
-            "hip_snapshot": str(snapshot_path) if snapshot_path else None,
+            "product_type": "flipbook",
+            "animated": True,
             "frame_start": start,
             "frame_end": end,
-        })
+            "expect_mp4": True,
+            "published_by": os.getenv("USER", "unknown"),
+            "published_at": datetime.datetime.now().isoformat(),
+            "hip_snapshot": str(snapshot_path) if snapshot_path else None,
+        }
+
+        try:
+            product = pipeline.build_publish_product(mp4_path.parent, ctx)
+        except ValueError as exc:
+            raise RuntimeError(f"Flipbook validation failed:\n{exc}") from exc
+
+        pipeline.write_metadata(mp4_path.parent, product.to_dict())
 
         self._set_status(f"Flipbook v{ver:03d} published.", "#4e4")
 
@@ -1264,26 +1295,38 @@ class _RenderTab(QWidget):
             logger.warning("Hip snapshot skipped: %s", e)
 
         for entry in entries:
-            rop_name = entry["rop_name"]
-            exr_path = entry["exr_path"]
-            exr_pub_dir = exr_path.parent
-            mp4_path = entry.get("mp4_path")
+            rop_name      = entry["rop_name"]
+            exr_path      = entry["exr_path"]
+            exr_pub_dir   = exr_path.parent
+            mp4_path      = entry.get("mp4_path")
+            frame_start_e = entry["frame_start"]
+            frame_end_e   = entry["frame_end"]
 
-            pipeline.write_publish_metadata(exr_pub_dir, {
-                "schema_version": 1,
+            ctx = {
                 "entity": entity,
                 "task": task,
-                "rop_name": rop_name,
+                "publish_name": rop_name,
                 "version": ver,
+                "product_type": "render",
+                "animated": True,
+                "frame_start": frame_start_e,
+                "frame_end": frame_end_e,
                 "published_by": published_by,
                 "published_at": published_at,
-                "description": description,
                 "hip_snapshot": str(snapshot_path) if snapshot_path else None,
                 "usd_path": str(entry["usd_path"]),
-                "frame_start": entry["frame_start"],
-                "frame_end": entry["frame_end"],
-                "preview_mp4": str(mp4_path) if mp4_path else None,
-            })
+                "preview_dir": mp4_path.parent if mp4_path else None,
+                "expect_mp4": mp4_path is not None,
+            }
+
+            try:
+                product = pipeline.build_publish_product(exr_pub_dir, ctx)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Render validation failed for {rop_name}:\n{exc}"
+                ) from exc
+
+            pipeline.write_metadata(exr_pub_dir, product.to_dict())
 
         self._set_status(
             f"Rendered v{ver:03d} — {len(entries)} ROP(s) done.", "#4e4"

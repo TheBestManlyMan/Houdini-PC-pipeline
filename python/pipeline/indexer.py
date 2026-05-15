@@ -4,7 +4,8 @@ Project indexer — scans the filesystem for publishes and builds cached indexes
 Index files live at:
     {projects_root}/{project}/.pipeline/publishes.json
 
-The index is always rebuilt from disk. Version numbers are never stored as state.
+The index is always rebuilt from disk.  Version numbers are never stored as state.
+Gallery contract: reads schema only — no filesystem inference, no globbing.
 """
 
 import json
@@ -22,6 +23,9 @@ logger = logging.getLogger("pipeline")
 
 _INDEX_SUBDIR = ".pipeline"
 _INDEX_FILENAME = "publishes.json"
+
+# Fields that identify a canonical schema v1 publish product
+_CANONICAL_FIELDS = frozenset({"representations", "preview", "paths", "audit"})
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +79,7 @@ def _iter_entity_roots(project_dir: Path, project_meta: dict) -> Iterator[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Publish discovery
+# Publish directory discovery
 # ---------------------------------------------------------------------------
 
 def _iter_publish_dirs(entity_root: Path) -> Iterator[Path]:
@@ -112,109 +116,70 @@ def _iter_publish_dirs(entity_root: Path) -> Iterator[Path]:
                         yield ver_dir
 
 
-def _read_publish_record(ver_dir: Path, entity_entry: dict) -> dict | None:
-    """
-    Read (or synthesise) a publish record for a versioned directory.
-    Returns None if the directory is empty or unreadable.
-    """
-    try:
-        meta = read_metadata(ver_dir)
-        if meta is not None:
-            meta["_index_path"] = str(ver_dir)
-            return meta
-        # Synthesise minimal record from folder structure
-        parts = ver_dir.parts
-        # …/publish/{fmt}/{task}/{pub_name}/{ver}
-        record = _synthesise_record(ver_dir, entity_entry)
-        return record
-    except Exception as e:
-        logger.warning("Could not read publish at %s: %s", ver_dir, e)
-        return None
-
-
-def _synthesise_record(ver_dir: Path, entity_entry: dict) -> dict:
-    """Build a minimal index entry from folder path when no metadata.json exists.
-
-    publish/ layout: publish/{fmt}/{task}/{pub_name}/{ver}
-    preview/ layout: preview/{task}/{pub_name}/{ver}  (no fmt level)
-    """
-    entity_root = Path(entity_entry["entity_root"])
-    ver_name = ver_dir.name
-    pub_name = ver_dir.parent.name
-    task = ver_dir.parent.parent.name
-
-    # Detect whether this came from preview/ (3 levels) or publish/ (4 levels)
-    top = ver_dir.parent.parent.parent
-    if top == entity_root / "preview":
-        fmt = "flipbook"
-    else:
-        fmt = top.name  # publish/{fmt} → fmt is the grandparent's name
-
-    entity_root = entity_entry["entity_root"]
-    proj = entity_entry["project"]
-
-    return {
-        "schema_version": 0,
-        "uuid": None,
-        "project": proj,
-        "entity": "",
-        "task": task,
-        "publish_type": fmt,
-        "version": int(ver_name[1:]) if ver_name[1:].isdigit() else 0,
-        "created_at": "",
-        "created_by": "",
-        "source": {},
-        "outputs": {},
-        "stats": {"disk_mb": 0.0},
-        "dependencies": [],
-        "tags": [],
-        "notes": [],
-        "_index_path": str(ver_dir),
-        "_synthesised": True,
-    }
-
-
 # ---------------------------------------------------------------------------
-# Validation helpers
+# Schema validation (no filesystem access)
 # ---------------------------------------------------------------------------
 
-def _check_missing_outputs(record: dict) -> list[str]:
-    """Return list of warning strings for missing expected output files."""
+def _is_canonical(record: dict) -> bool:
+    """Return True if record follows canonical publish schema v1."""
+    return bool(_CANONICAL_FIELDS.issubset(record.keys()))
+
+
+def _schema_warnings(record: dict) -> list[str]:
+    """Derive warnings from schema fields — no filesystem access."""
+    if not _is_canonical(record):
+        return ["non_canonical_schema"]
+
     warnings = []
-    path = Path(record.get("_index_path", ""))
-    if not path.is_dir():
-        return warnings
+    reps = record.get("representations") or []
+    if not reps:
+        warnings.append("no_representations")
 
-    outputs = record.get("outputs", {})
-
-    # Check thumbnail
-    thumb = outputs.get("thumbnail", "")
-    if not thumb or not Path(thumb).exists():
-        jpgs = list(path.glob("*.jpg"))
-        if not jpgs:
-            warnings.append("missing_thumbnail")
-
-    # Check mp4
-    mp4 = outputs.get("mp4", "")
-    if not mp4 or not Path(mp4).exists():
-        mp4s = list(path.glob("*.mp4"))
-        if not mp4s:
-            warnings.append("missing_preview_mp4")
-
-    # Check metadata
-    if not (path / METADATA_FILENAME).exists() and not (path / _LEGACY_FILENAME).exists():
-        warnings.append("missing_metadata")
+    preview = record.get("preview") or {}
+    if not preview.get("mp4"):
+        warnings.append("missing_preview_mp4")
+    if not preview.get("thumbnail"):
+        warnings.append("missing_thumbnail")
 
     return warnings
 
 
-def _check_orphaned(record: dict) -> bool:
-    """An orphaned publish has no output files of any kind."""
-    path = Path(record.get("_index_path", ""))
-    if not path.is_dir():
-        return True
-    files = [f for f in path.iterdir() if f.is_file()]
-    return len(files) == 0
+# ---------------------------------------------------------------------------
+# Publish record reader
+# ---------------------------------------------------------------------------
+
+def _read_publish_record(ver_dir: Path, entity_entry: dict) -> dict | None:
+    """
+    Read publish metadata for a versioned directory.
+
+    Returns the record annotated with _index_path and _schema_valid.
+    Returns None only if the directory is completely unreadable.
+
+    Never synthesises records from folder structure — if no metadata.json
+    exists the record is returned with _schema_valid=False so the gallery
+    can display "Invalid Publish" rather than guess at content.
+    """
+    try:
+        meta = read_metadata(ver_dir)
+    except Exception as e:
+        logger.warning("Could not read publish at %s: %s", ver_dir, e)
+        return None
+
+    if meta is None:
+        # No metadata file — return a minimal invalid record
+        return {
+            "schema_version": 0,
+            "_index_path": str(ver_dir),
+            "_schema_valid": False,
+            "_invalid_reason": "missing_metadata",
+        }
+
+    meta["_index_path"] = str(ver_dir)
+    meta["_schema_valid"] = _is_canonical(meta)
+    if not meta["_schema_valid"]:
+        meta["_invalid_reason"] = "non_canonical_schema"
+
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -225,17 +190,16 @@ def build_project_index(project_folder: str) -> dict:
     """
     Scan a single project directory and return its full index as a dict.
 
-    The index is a flat list of publish records, each annotated with:
-    - _index_path: the versioned publish folder
-    - _warnings: list of validation issues
-    - _orphaned: True if the folder contains no files
+    Each publish record is annotated with:
+      _index_path   — the versioned publish folder
+      _schema_valid — True only for canonical schema v1 records
+      _warnings     — list of schema-derived issues (no filesystem access)
     """
     root = projects_root()
     project_dir = root / project_folder
     if not project_dir.is_dir():
         raise ValueError(f"Project directory not found: {project_dir}")
 
-    # Find project metadata
     all_projects = load_projects()
     project_meta = next(
         (p for p in all_projects if p.get("folder") == project_folder),
@@ -257,8 +221,8 @@ def build_project_index(project_folder: str) -> dict:
             if record is None:
                 continue
 
-            # Annotate with context if missing
-            if not record.get("context"):
+            # Annotate entity context onto canonical records that lack it
+            if _is_canonical(record) and not record.get("context"):
                 if entity_entry["entity_type"] == "shot":
                     record["context"] = {
                         "type": "shot",
@@ -275,8 +239,7 @@ def build_project_index(project_folder: str) -> dict:
             if not record.get("project"):
                 record["project"] = project_meta.get("name", project_folder)
 
-            record["_warnings"] = _check_missing_outputs(record)
-            record["_orphaned"] = _check_orphaned(record)
+            record["_warnings"] = _schema_warnings(record)
             publishes.append(record)
 
     return {
@@ -331,7 +294,7 @@ def scan_all_projects() -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
-# Dependency helpers (Phase 7)
+# Dependency helpers
 # ---------------------------------------------------------------------------
 
 def get_publish_dependencies(publish_uuid: str, project_folder: str) -> list[dict]:
@@ -362,8 +325,6 @@ def get_downstream_dependents(publish_uuid: str, project_folder: str) -> list[di
 def detect_stale_dependencies(publish_uuid: str, project_folder: str) -> list[dict]:
     """
     Return dependencies whose source publish has been superseded by a newer version.
-    A dependency is considered stale if there exists a newer version of the same
-    entity/task/publish_type in the index.
     """
     index = read_project_index(project_folder)
     if not index:
@@ -382,17 +343,16 @@ def detect_stale_dependencies(publish_uuid: str, project_folder: str) -> list[di
             stale.append({**dep, "_reason": "dependency_not_found"})
             continue
 
-        # Check whether a newer version of the same entity+task+publish_type exists
-        dep_entity = dep_record.get("entity", "")
-        dep_task = dep_record.get("task", "")
-        dep_type = dep_record.get("publish_type", "")
+        dep_entity  = dep_record.get("entity", "")
+        dep_task    = dep_record.get("task", "")
+        dep_type    = dep_record.get("product_type") or dep_record.get("publish_type", "")
         dep_version = dep_record.get("version", 0)
 
         newer = [
             r for r in all_publishes
             if r.get("entity") == dep_entity
             and r.get("task") == dep_task
-            and r.get("publish_type") == dep_type
+            and (r.get("product_type") or r.get("publish_type", "")) == dep_type
             and r.get("version", 0) > dep_version
         ]
         if newer:
