@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { demoIndex } from '../data/demoIndex.js'
 
 const INDEX_BASE = import.meta.env.VITE_INDEX_BASE ?? ''
-const DEFAULT_API = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8765/api'
+const DEFAULT_API = import.meta.env.VITE_API_BASE ?? `http://${window.location.hostname}:8765/api`
 
 function timeoutSignal(ms) {
   const ctrl = new AbortController()
