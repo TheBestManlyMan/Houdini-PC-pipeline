@@ -1,6 +1,16 @@
 /* global React, ReactDOM, TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakColor, TweakToggle, TweakSlider, TweakText */
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
+// ───────────────────────── fullscreen helper ──────────────────────────
+const toggleFullscreen = (el) => {
+  if (!el) return;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
+  } else {
+    (document.exitFullscreen?.() ?? document.webkitExitFullscreen?.());
+  }
+};
+
 // ───────────────────────── format helpers ──────────────────────────
 const versionLabel = (v) => `v${String(v).padStart(3, '0')}`;
 const fmtRelative = (iso) => {
@@ -81,6 +91,7 @@ const Icon = ({ name, size = 14 }) => {
     tag:      <><path d="M2 7V3a1 1 0 011-1h4l7 7-5 5z" {...stroke}/><circle cx="5" cy="5" r="0.6" fill="currentColor"/></>,
     rop:      <><rect x="2" y="6" width="4" height="4" rx="0.5" {...stroke}/><rect x="10" y="6" width="4" height="4" rx="0.5" {...stroke}/><path d="M6 8h4" {...stroke}/></>,
     info:     <><circle cx="8" cy="8" r="6" {...stroke}/><path d="M8 7v4M8 5v0.5" {...stroke}/></>,
+    expand:   <><path d="M3 7V3h4" {...stroke}/><path d="M13 3h-4M13 3v4" {...stroke}/><path d="M3 9v4h4" {...stroke}/><path d="M13 13h-4M13 13v-4" {...stroke}/></>,
     cube:     <><path d="M8 2l5 3v6l-5 3-5-3V5z" {...stroke}/><path d="M8 2v12M3 5l5 3 5-3" {...stroke}/></>,
     rotate:   <><path d="M13 8a5 5 0 11-1.5-3.5" {...stroke}/><path d="M11 3l2 2-2 2" {...stroke}/></>,
     image:    <><rect x="2" y="3" width="12" height="10" rx="1" {...stroke}/><path d="M2 9l3-3 3 3 3-4 3 4" {...stroke}/></>,
@@ -185,33 +196,65 @@ const WarnPill = ({ warnings }) => {
   );
 };
 
-// ───────────────────────── 3d viewer ──────────────────────────
-// Wraps the <model-viewer> web component imperatively to avoid React 18's
-// unreliable boolean-attribute handling on custom elements.
-const ModelViewer3D = ({ src, autoRotate }) => {
-  const containerRef = useRef(null);
+// ───────────────────────── glb preview (model-viewer) ──────────────────────────
+const GlbPreview = ({ src, entity }) => {
+  const ref = useRef(null);
+  const [progress, setProgress] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [err, setErr] = useState(null);
 
   useEffect(() => {
-    if (!containerRef.current || !src) return;
-    const mv = document.createElement('model-viewer');
-    mv.setAttribute('src', src);
-    mv.setAttribute('camera-controls', '');
-    mv.setAttribute('shadow-intensity', '1');
-    mv.setAttribute('tone-mapping', 'commerce');
-    mv.setAttribute('environment-image', 'neutral');
-    mv.style.cssText = 'width:100%;height:100%;background:transparent;--poster-color:transparent;';
-    containerRef.current.appendChild(mv);
-    return () => { if (containerRef.current) containerRef.current.innerHTML = ''; };
+    const el = ref.current; if (!el) return;
+    const onProg = (e) => setProgress(Math.round((e.detail.totalProgress || 0) * 100));
+    const onLoad = () => setReady(true);
+    const onErr  = (e) => setErr(e.detail?.sourceError?.message || 'Failed to load model');
+    el.addEventListener('progress', onProg);
+    el.addEventListener('load', onLoad);
+    el.addEventListener('error', onErr);
+    return () => {
+      el.removeEventListener('progress', onProg);
+      el.removeEventListener('load', onLoad);
+      el.removeEventListener('error', onErr);
+    };
   }, [src]);
 
-  useEffect(() => {
-    const mv = containerRef.current?.querySelector('model-viewer');
-    if (!mv) return;
-    autoRotate ? mv.setAttribute('auto-rotate', '') : mv.removeAttribute('auto-rotate');
-  }, [autoRotate]);
-
   return (
-    <div ref={containerRef} style={{ width:'100%', height:'100%' }}/>
+    <div className="glb-preview">
+      <model-viewer
+        ref={ref}
+        src={src}
+        camera-controls
+        interaction-prompt="none"
+        shadow-intensity="1.1"
+        exposure="0.95"
+        environment-image="neutral"
+        camera-orbit="35deg 75deg auto"
+        field-of-view="32deg"
+        style={{
+          width: '100%', height: '100%', display: 'block',
+          background: 'radial-gradient(ellipse at center, oklch(22% 0.01 250), oklch(10% 0.004 250))',
+        }}
+      />
+      <div className="glb-pills">
+        <span className="glb-pill mono">{entity}.glb</span>
+        <span className="glb-pill mono" data-state={ready ? 'ok' : (err ? 'err' : 'loading')}>
+          {ready ? 'loaded' : (err ? 'error' : `${progress}%`)}
+        </span>
+      </div>
+      {!ready && !err && (
+        <div className="glb-overlay">
+          <div className="glb-spinner"/>
+          <div className="mono small muted">Streaming GLB · {progress}%</div>
+        </div>
+      )}
+      {err && (
+        <div className="glb-overlay glb-err">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Couldn't load model</div>
+          <div className="mono small">{err}</div>
+        </div>
+      )}
+      <div className="glb-hint">drag to orbit · scroll to zoom · right-drag to pan</div>
+    </div>
   );
 };
 
@@ -219,7 +262,7 @@ const ModelViewer3D = ({ src, autoRotate }) => {
 const Card = ({ pub, selected, onSelect, view }) => {
   const [hover, setHover] = useState(false);
   const hasVideo = !!pub.outputs?.mp4;
-  const hasGlb   = !!pub.outputs?.glb;
+  const hasGlb   = !!(pub.real_glb || pub.outputs?.glb);
   const thumb = pub.outputs?.thumbnail;
 
   if (view === 'list') {
@@ -483,8 +526,7 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
   const [copied, setCopied] = useState(false);
   const [previewFrame, setPreviewFrame] = useState(null);
   const [scrubbing, setScrubbing] = useState(false);
-  const [view3d, setView3d] = useState(false);
-  const [autoRotate, setAutoRotate] = useState(false);
+  const previewRef = useRef(null);
 
   // versions = same entity/task/publish_type
   const versions = useMemo(() => {
@@ -510,12 +552,9 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
     );
   }, [pub, allPubs]);
 
-  // Reset viewer state when switching to a different publish
-  useEffect(() => { setView3d(false); setAutoRotate(false); }, [pub?.uuid]);
-
   if (!pub) return null;
 
-  const hasGlb = !!pub.outputs?.glb;
+  const glbSrc = pub.real_glb || pub.outputs?.glb || null;
 
   const copy = () => {
     const path = pub._index_path || pub.outputs?.usd || pub.outputs?.cache || pub.outputs?.frames || '';
@@ -550,65 +589,45 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
           <span className="task">{pub.task}</span>
           <span className="ver">{versionLabel(pub.version)}</span>
         </div>
-        <div style={{ display:'flex', gap:4, alignItems:'center' }}>
-          {hasGlb && (
-            <button className="icon-btn" title={view3d ? 'Show thumbnail' : 'View 3D proxy'}
-                    onClick={() => setView3d(v => !v)}
-                    style={{ color: view3d ? 'var(--accent)' : undefined }}>
-              <Icon name={view3d ? 'image' : 'cube'} size={13}/>
-            </button>
-          )}
-          <button className="icon-btn" onClick={onClose} title="Close (Esc)"><Icon name="close" size={12}/></button>
-        </div>
+        <button className="icon-btn" onClick={onClose} title="Close (Esc)"><Icon name="close" size={12}/></button>
       </div>
 
       <div className="detail-preview"
-           onMouseDown={(e) => { if (!view3d) { setScrubbing(true); onScrub(e); } }}
-           onMouseUp={() => setScrubbing(false)}
-           onMouseLeave={() => { setScrubbing(false); setPreviewFrame(null); }}
-           onMouseMove={(e) => scrubbing && !view3d && onScrub(e)}>
-        {view3d && hasGlb ? (
-          <>
-            <ModelViewer3D src={pub.outputs.glb} autoRotate={autoRotate}/>
-            <div style={{ position:'absolute', bottom:8, right:8, display:'flex', gap:4, zIndex:2 }}>
-              <button
-                onClick={() => setAutoRotate(r => !r)}
-                title={autoRotate ? 'Stop rotating' : 'Auto-rotate'}
-                style={{
-                  display:'flex', alignItems:'center', gap:4,
-                  padding:'3px 8px', borderRadius:4, fontSize:11,
-                  background: autoRotate ? 'var(--accent-soft)' : 'oklch(18% 0.005 250 / 0.85)',
-                  color: autoRotate ? 'var(--accent)' : 'var(--text-3)',
-                  border: `1px solid ${autoRotate ? 'var(--accent-line)' : 'var(--border)'}`,
-                  backdropFilter: 'blur(4px)',
-                }}>
-                <Icon name="rotate" size={11}/> {autoRotate ? 'Stop' : 'Rotate'}
-              </button>
-            </div>
-            <TypeChip type={pub.publish_type}/>
-          </>
+           ref={previewRef}
+           onMouseDown={glbSrc ? undefined : (e) => { setScrubbing(true); onScrub(e); }}
+           onMouseUp={glbSrc ? undefined : () => setScrubbing(false)}
+           onMouseLeave={glbSrc ? undefined : () => { setScrubbing(false); setPreviewFrame(null); }}
+           onMouseMove={glbSrc ? undefined : (e) => scrubbing && onScrub(e)}>
+        {glbSrc ? (
+          <GlbPreview src={glbSrc} entity={pub.entity}/>
         ) : (
           <>
             {pub.outputs?.thumbnail
               ? <img src={pub.outputs.thumbnail} alt=""/>
               : <div className="preview-no">no preview</div>}
             {pub.outputs?.mp4 && <HoverPreview pub={pub} playing={true}/>}
-            {fs != null && frames > 1 && (
-              <div className="scrubber">
-                <div className="scrub-track">
-                  <div className="scrub-fill" style={{
-                    width: previewFrame != null ? `${((previewFrame - fs) / Math.max(1, frames - 1)) * 100}%` : '0%'
-                  }}/>
-                </div>
-                <div className="scrub-info mono">
-                  <span>F {previewFrame ?? fs}</span>
-                  <span className="muted">/ {fe}</span>
-                </div>
-              </div>
-            )}
-            <TypeChip type={pub.publish_type}/>
           </>
         )}
+        {(glbSrc || pub.outputs?.thumbnail || pub.outputs?.mp4) && (
+          <button className="preview-fs" title="Fullscreen"
+                  onClick={(e) => { e.stopPropagation(); toggleFullscreen(previewRef.current); }}>
+            <Icon name="expand" size={12}/>
+          </button>
+        )}
+        {fs != null && frames > 1 && !glbSrc && (
+          <div className="scrubber">
+            <div className="scrub-track">
+              <div className="scrub-fill" style={{
+                width: previewFrame != null ? `${((previewFrame - fs) / Math.max(1, frames - 1)) * 100}%` : '0%'
+              }}/>
+            </div>
+            <div className="scrub-info mono">
+              <span>F {previewFrame ?? fs}</span>
+              <span className="muted">/ {fe}</span>
+            </div>
+          </div>
+        )}
+        <TypeChip type={pub.publish_type}/>
       </div>
 
       {pub._warnings?.length > 0 && (
@@ -850,8 +869,9 @@ const Topbar = ({ filters, setFilters, view, setView, sort, setSort, count, tota
           <div className="brand-sub">Publish Gallery</div>
         </div>
         <nav className="top-nav">
-          <a className="top-nav-link active" href="Publish Gallery.html">Gallery</a>
-          <a className="top-nav-link" href="Pipeline Manager.html">Manager</a>
+          <a className="top-nav-link active" href="gallery.html">Gallery</a>
+          <a className="top-nav-link" href="pipeline_manager.html">Manager</a>
+          <a className="top-nav-link" href="mobile-review.html">Mobile</a>
         </nav>
       </div>
 

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FX Pipeline — Mobile Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="mobile/mobile.css">
+<style>
+  html, body { margin: 0; height: 100%; background: oklch(20% 0.004 250); }
+  #root { height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- model-viewer web component (for the real GLB preview) -->
+<script type="module" src="https://unpkg.com/@google/model-viewer@4.0.0/dist/model-viewer.min.js"></script>
+
+<!-- mock data (publishes) -->
+<script src="mock-data.js"></script>
+<script src="mobile/mock-glb-injector.js"></script>
+
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- starter components -->
+<script type="text/babel" src="mobile/android-frame.jsx"></script>
+<script type="text/babel" src="mobile/design-canvas.jsx"></script>
+
+<!-- shared mobile primitives -->
+<script type="text/babel" src="mobile/mobile-shared.jsx"></script>
+
+<!-- variants -->
+<script type="text/babel" src="mobile/variant-a-inbox.jsx"></script>
+<script type="text/babel" src="mobile/variant-b-board.jsx"></script>
+<script type="text/babel" src="mobile/variant-c-reel.jsx"></script>
+
+<!-- canvas host -->
+<script type="text/babel" src="mobile/canvas-app.jsx"></script>
+</body>
+</html>
