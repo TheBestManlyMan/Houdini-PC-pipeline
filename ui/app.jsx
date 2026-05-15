@@ -81,6 +81,9 @@ const Icon = ({ name, size = 14 }) => {
     tag:      <><path d="M2 7V3a1 1 0 011-1h4l7 7-5 5z" {...stroke}/><circle cx="5" cy="5" r="0.6" fill="currentColor"/></>,
     rop:      <><rect x="2" y="6" width="4" height="4" rx="0.5" {...stroke}/><rect x="10" y="6" width="4" height="4" rx="0.5" {...stroke}/><path d="M6 8h4" {...stroke}/></>,
     info:     <><circle cx="8" cy="8" r="6" {...stroke}/><path d="M8 7v4M8 5v0.5" {...stroke}/></>,
+    cube:     <><path d="M8 2l5 3v6l-5 3-5-3V5z" {...stroke}/><path d="M8 2v12M3 5l5 3 5-3" {...stroke}/></>,
+    rotate:   <><path d="M13 8a5 5 0 11-1.5-3.5" {...stroke}/><path d="M11 3l2 2-2 2" {...stroke}/></>,
+    image:    <><rect x="2" y="3" width="12" height="10" rx="1" {...stroke}/><path d="M2 9l3-3 3 3 3-4 3 4" {...stroke}/></>,
   };
   return <svg width={s} height={s} viewBox="0 0 16 16" style={{ display: 'block' }}>{paths[name]}</svg>;
 };
@@ -182,10 +185,41 @@ const WarnPill = ({ warnings }) => {
   );
 };
 
+// ───────────────────────── 3d viewer ──────────────────────────
+// Wraps the <model-viewer> web component imperatively to avoid React 18's
+// unreliable boolean-attribute handling on custom elements.
+const ModelViewer3D = ({ src, autoRotate }) => {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current || !src) return;
+    const mv = document.createElement('model-viewer');
+    mv.setAttribute('src', src);
+    mv.setAttribute('camera-controls', '');
+    mv.setAttribute('shadow-intensity', '1');
+    mv.setAttribute('tone-mapping', 'commerce');
+    mv.setAttribute('environment-image', 'neutral');
+    mv.style.cssText = 'width:100%;height:100%;background:transparent;--poster-color:transparent;';
+    containerRef.current.appendChild(mv);
+    return () => { if (containerRef.current) containerRef.current.innerHTML = ''; };
+  }, [src]);
+
+  useEffect(() => {
+    const mv = containerRef.current?.querySelector('model-viewer');
+    if (!mv) return;
+    autoRotate ? mv.setAttribute('auto-rotate', '') : mv.removeAttribute('auto-rotate');
+  }, [autoRotate]);
+
+  return (
+    <div ref={containerRef} style={{ width:'100%', height:'100%' }}/>
+  );
+};
+
 // ───────────────────────── card ──────────────────────────
 const Card = ({ pub, selected, onSelect, view }) => {
   const [hover, setHover] = useState(false);
   const hasVideo = !!pub.outputs?.mp4;
+  const hasGlb   = !!pub.outputs?.glb;
   const thumb = pub.outputs?.thumbnail;
 
   if (view === 'list') {
@@ -197,6 +231,7 @@ const Card = ({ pub, selected, onSelect, view }) => {
           {thumb ? <img src={thumb} alt=""/> : <div className="no-thumb"/>}
           {hasVideo && hover && <HoverPreview pub={pub} playing={hover}/>}
           {hasVideo && <span className="play-pill"><Icon name="play" size={9}/></span>}
+          {hasGlb && <span className="play-pill" style={{ left: hasVideo ? 32 : 6 }} title="3D proxy available"><Icon name="cube" size={9}/></span>}
         </div>
         <div className="row-main">
           <div className="row-title">
@@ -240,6 +275,7 @@ const Card = ({ pub, selected, onSelect, view }) => {
                 <Icon name="warn" size={11}/>
               </span>
             )}
+            {hasGlb && <span className="play-pill" title="3D proxy available"><Icon name="cube" size={9}/></span>}
             {hasVideo && <span className="play-pill"><Icon name="play" size={9}/></span>}
           </div>
         </div>
@@ -447,6 +483,8 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
   const [copied, setCopied] = useState(false);
   const [previewFrame, setPreviewFrame] = useState(null);
   const [scrubbing, setScrubbing] = useState(false);
+  const [view3d, setView3d] = useState(false);
+  const [autoRotate, setAutoRotate] = useState(false);
 
   // versions = same entity/task/publish_type
   const versions = useMemo(() => {
@@ -472,7 +510,12 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
     );
   }, [pub, allPubs]);
 
+  // Reset viewer state when switching to a different publish
+  useEffect(() => { setView3d(false); setAutoRotate(false); }, [pub?.uuid]);
+
   if (!pub) return null;
+
+  const hasGlb = !!pub.outputs?.glb;
 
   const copy = () => {
     const path = pub._index_path || pub.outputs?.usd || pub.outputs?.cache || pub.outputs?.frames || '';
@@ -507,32 +550,65 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
           <span className="task">{pub.task}</span>
           <span className="ver">{versionLabel(pub.version)}</span>
         </div>
-        <button className="icon-btn" onClick={onClose} title="Close (Esc)"><Icon name="close" size={12}/></button>
+        <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+          {hasGlb && (
+            <button className="icon-btn" title={view3d ? 'Show thumbnail' : 'View 3D proxy'}
+                    onClick={() => setView3d(v => !v)}
+                    style={{ color: view3d ? 'var(--accent)' : undefined }}>
+              <Icon name={view3d ? 'image' : 'cube'} size={13}/>
+            </button>
+          )}
+          <button className="icon-btn" onClick={onClose} title="Close (Esc)"><Icon name="close" size={12}/></button>
+        </div>
       </div>
 
       <div className="detail-preview"
-           onMouseDown={(e) => { setScrubbing(true); onScrub(e); }}
+           onMouseDown={(e) => { if (!view3d) { setScrubbing(true); onScrub(e); } }}
            onMouseUp={() => setScrubbing(false)}
            onMouseLeave={() => { setScrubbing(false); setPreviewFrame(null); }}
-           onMouseMove={(e) => scrubbing && onScrub(e)}>
-        {pub.outputs?.thumbnail
-          ? <img src={pub.outputs.thumbnail} alt=""/>
-          : <div className="preview-no">no preview</div>}
-        {pub.outputs?.mp4 && <HoverPreview pub={pub} playing={true}/>}
-        {fs != null && frames > 1 && (
-          <div className="scrubber">
-            <div className="scrub-track">
-              <div className="scrub-fill" style={{
-                width: previewFrame != null ? `${((previewFrame - fs) / Math.max(1, frames - 1)) * 100}%` : '0%'
-              }}/>
+           onMouseMove={(e) => scrubbing && !view3d && onScrub(e)}>
+        {view3d && hasGlb ? (
+          <>
+            <ModelViewer3D src={pub.outputs.glb} autoRotate={autoRotate}/>
+            <div style={{ position:'absolute', bottom:8, right:8, display:'flex', gap:4, zIndex:2 }}>
+              <button
+                onClick={() => setAutoRotate(r => !r)}
+                title={autoRotate ? 'Stop rotating' : 'Auto-rotate'}
+                style={{
+                  display:'flex', alignItems:'center', gap:4,
+                  padding:'3px 8px', borderRadius:4, fontSize:11,
+                  background: autoRotate ? 'var(--accent-soft)' : 'oklch(18% 0.005 250 / 0.85)',
+                  color: autoRotate ? 'var(--accent)' : 'var(--text-3)',
+                  border: `1px solid ${autoRotate ? 'var(--accent-line)' : 'var(--border)'}`,
+                  backdropFilter: 'blur(4px)',
+                }}>
+                <Icon name="rotate" size={11}/> {autoRotate ? 'Stop' : 'Rotate'}
+              </button>
             </div>
-            <div className="scrub-info mono">
-              <span>F {previewFrame ?? fs}</span>
-              <span className="muted">/ {fe}</span>
-            </div>
-          </div>
+            <TypeChip type={pub.publish_type}/>
+          </>
+        ) : (
+          <>
+            {pub.outputs?.thumbnail
+              ? <img src={pub.outputs.thumbnail} alt=""/>
+              : <div className="preview-no">no preview</div>}
+            {pub.outputs?.mp4 && <HoverPreview pub={pub} playing={true}/>}
+            {fs != null && frames > 1 && (
+              <div className="scrubber">
+                <div className="scrub-track">
+                  <div className="scrub-fill" style={{
+                    width: previewFrame != null ? `${((previewFrame - fs) / Math.max(1, frames - 1)) * 100}%` : '0%'
+                  }}/>
+                </div>
+                <div className="scrub-info mono">
+                  <span>F {previewFrame ?? fs}</span>
+                  <span className="muted">/ {fe}</span>
+                </div>
+              </div>
+            )}
+            <TypeChip type={pub.publish_type}/>
+          </>
         )}
-        <TypeChip type={pub.publish_type}/>
       </div>
 
       {pub._warnings?.length > 0 && (
@@ -648,14 +724,15 @@ const DetailPanel = ({ pub, allPubs, onClose, onSelect }) => {
               <div className="path-text mono">{pub._index_path}</div>
             </div>
 
-            {(pub.outputs?.mp4 || pub.outputs?.cache || pub.outputs?.usd || pub.outputs?.frames) && (
+            {(pub.outputs?.mp4 || pub.outputs?.cache || pub.outputs?.usd || pub.outputs?.frames || pub.outputs?.glb) && (
               <div className="block">
                 <div className="block-label">Outputs</div>
                 <div className="outputs-list">
-                  {pub.outputs.mp4 && <div className="output-row"><span className="output-key">mp4</span><span className="mono output-val">preview.mp4</span></div>}
+                  {pub.outputs.mp4    && <div className="output-row"><span className="output-key">mp4</span><span className="mono output-val">preview.mp4</span></div>}
                   {pub.outputs.cache  && <div className="output-row"><span className="output-key">cache</span><span className="mono output-val">{pub.outputs.cache.split('/').pop()}</span></div>}
                   {pub.outputs.usd    && <div className="output-row"><span className="output-key">usd</span><span className="mono output-val">{pub.outputs.usd.split('/').pop()}</span></div>}
                   {pub.outputs.frames && <div className="output-row"><span className="output-key">frames</span><span className="mono output-val">{pub.outputs.frames.split('/').pop()}</span></div>}
+                  {pub.outputs.glb    && <div className="output-row"><span className="output-key">proxy glb</span><span className="mono output-val">proxy.glb</span></div>}
                 </div>
               </div>
             )}
