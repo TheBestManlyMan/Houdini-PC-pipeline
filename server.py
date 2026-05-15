@@ -80,8 +80,38 @@ class AssetCreate(BaseModel):
     asset: str
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers + input validation
 # ---------------------------------------------------------------------------
+
+_VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_MAX_ID_LEN = 64
+
+
+def _validate_id(value: str, label: str) -> str:
+    """Validate a user-supplied identifier used in filesystem paths.
+
+    Accepts only letters, digits, hyphens, and underscores. Rejects empty
+    values, oversized values, and anything that could enable path traversal.
+    Returns the stripped value on success; raises HTTP 400 on failure.
+    """
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(status_code=400, detail=f"{label} is required.")
+    if len(v) > _MAX_ID_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} exceeds maximum length ({_MAX_ID_LEN} chars).",
+        )
+    if not _VALID_ID_RE.match(v):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{label} contains invalid characters. "
+                "Use letters, digits, hyphens, and underscores only."
+            ),
+        )
+    return v
+
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", name).strip("-").lower()
@@ -94,7 +124,8 @@ def _get_project_or_404(folder: str) -> dict:
     return project
 
 # ---------------------------------------------------------------------------
-# Routers
+# Routers — all registered BEFORE the static catch-all mount so that /api
+# routes can never be shadowed by the static file handler.
 # ---------------------------------------------------------------------------
 
 _r_projects  = APIRouter(prefix="/api", tags=["projects"])
@@ -114,11 +145,14 @@ def list_projects():
 
 @_r_projects.post("/projects", status_code=201)
 def create_project(body: ProjectCreate):
-    folder = body.folder or _slug(body.name)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name is required.")
+    folder = _validate_id(body.folder or _slug(name), "Project folder")
     with _write_lock:
         try:
             project = pipeline.add_project(
-                name=body.name,
+                name=name,
                 folder=folder,
                 fps=body.fps,
                 resolution=body.resolution,
@@ -131,6 +165,7 @@ def create_project(body: ProjectCreate):
 
 @_r_projects.delete("/projects/{folder}", status_code=200)
 def delete_project(folder: str, delete_files: bool = False):
+    folder = _validate_id(folder, "Project folder")
     with _write_lock:
         projects = pipeline.load_projects()
         match = next((p for p in projects if p["folder"] == folder), None)
@@ -150,14 +185,14 @@ def delete_project(folder: str, delete_files: bool = False):
 
 @_r_sequences.get("/projects/{folder}/sequences")
 def list_sequences(folder: str):
+    folder = _validate_id(folder, "Project folder")
     return _get_project_or_404(folder).get("sequences", [])
 
 
 @_r_sequences.post("/projects/{folder}/sequences", status_code=201)
 def create_sequence(folder: str, body: SequenceCreate):
-    seq = body.seq.strip().upper()
-    if not seq:
-        raise HTTPException(status_code=400, detail="Sequence code is required.")
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id((body.seq or "").strip().upper(), "Sequence code")
     with _write_lock:
         try:
             pipeline.add_sequence(folder, seq)
@@ -169,6 +204,8 @@ def create_sequence(folder: str, body: SequenceCreate):
 
 @_r_sequences.delete("/projects/{folder}/sequences/{seq}", status_code=200)
 def delete_sequence(folder: str, seq: str, delete_files: bool = False):
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id(seq, "Sequence code")
     with _write_lock:
         projects = pipeline.load_projects()
         match = next((p for p in projects if p["folder"] == folder), None)
@@ -192,6 +229,8 @@ def delete_sequence(folder: str, seq: str, delete_files: bool = False):
 
 @_r_shots.get("/projects/{folder}/sequences/{seq}/shots")
 def list_shots(folder: str, seq: str):
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id(seq, "Sequence code")
     seq_dir = pipeline.projects_root() / folder / seq
     if not seq_dir.exists():
         return []
@@ -200,9 +239,9 @@ def list_shots(folder: str, seq: str):
 
 @_r_shots.post("/projects/{folder}/sequences/{seq}/shots", status_code=201)
 def create_shot(folder: str, seq: str, body: ShotCreate):
-    shot = body.shot.strip()
-    if not shot:
-        raise HTTPException(status_code=400, detail="Shot code is required.")
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id(seq, "Sequence code")
+    shot = _validate_id((body.shot or "").strip(), "Shot code")
     with _write_lock:
         work_dir = pipeline.shot_work_houdini(folder, seq, shot)
         if work_dir.exists():
@@ -213,9 +252,9 @@ def create_shot(folder: str, seq: str, body: ShotCreate):
 
 @_r_shots.delete("/projects/{folder}/sequences/{seq}/shots/{shot}", status_code=200)
 def delete_shot(folder: str, seq: str, shot: str, delete_files: bool = False):
-    shot_dir = pipeline.projects_root() / folder / seq / shot
-    if not shot_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Shot '{shot}' not found.")
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id(seq, "Sequence code")
+    shot = _validate_id(shot, "Shot code")
     # Shots are filesystem-only (no metadata record). Refusing to delete files
     # would leave state unchanged while returning success — explicitly rejected.
     if not delete_files:
@@ -224,12 +263,18 @@ def delete_shot(folder: str, seq: str, shot: str, delete_files: bool = False):
             detail="Shot has no separate metadata record. Pass ?delete_files=true to remove from filesystem.",
         )
     with _write_lock:
+        shot_dir = pipeline.projects_root() / folder / seq / shot
+        if not shot_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Shot '{shot}' not found.")
         shutil.rmtree(shot_dir)
     return {"deleted": shot}
 
 
 @_r_shots.get("/projects/{folder}/sequences/{seq}/shots/{shot}/hips")
 def list_hip_files(folder: str, seq: str, shot: str):
+    folder = _validate_id(folder, "Project folder")
+    seq = _validate_id(seq, "Sequence code")
+    shot = _validate_id(shot, "Shot code")
     work_dir = pipeline.shot_work_houdini(folder, seq, shot)
     hips = pipeline.find_hip_files(work_dir)
     result = []
@@ -252,6 +297,7 @@ def list_hip_files(folder: str, seq: str, shot: str):
 
 @_r_assets.get("/projects/{folder}/assets")
 def list_assets(folder: str):
+    folder = _validate_id(folder, "Project folder")
     _get_project_or_404(folder)
     assets_dir = pipeline.projects_root() / folder / "assets"
     if not assets_dir.exists():
@@ -267,9 +313,8 @@ def list_assets(folder: str):
 
 @_r_assets.post("/projects/{folder}/asset-types", status_code=201)
 def create_asset_type(folder: str, body: AssetTypeCreate):
-    asset_type = body.asset_type.strip().lower()
-    if not asset_type:
-        raise HTTPException(status_code=400, detail="Asset type is required.")
+    folder = _validate_id(folder, "Project folder")
+    asset_type = _validate_id((body.asset_type or "").strip().lower(), "Asset type")
     with _write_lock:
         (pipeline.projects_root() / folder / "assets" / asset_type).mkdir(
             parents=True, exist_ok=True
@@ -279,25 +324,26 @@ def create_asset_type(folder: str, body: AssetTypeCreate):
 
 @_r_assets.delete("/projects/{folder}/asset-types/{asset_type}", status_code=200)
 def delete_asset_type(folder: str, asset_type: str, delete_files: bool = False):
-    type_dir = pipeline.projects_root() / folder / "assets" / asset_type
-    if not type_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not found.")
+    folder = _validate_id(folder, "Project folder")
+    asset_type = _validate_id(asset_type, "Asset type")
     if not delete_files:
         raise HTTPException(
             status_code=400,
             detail="Asset type has no separate metadata record. Pass ?delete_files=true to remove from filesystem.",
         )
     with _write_lock:
+        type_dir = pipeline.projects_root() / folder / "assets" / asset_type
+        if not type_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not found.")
         shutil.rmtree(type_dir)
     return {"deleted": asset_type}
 
 
 @_r_assets.post("/projects/{folder}/assets/{asset_type}", status_code=201)
 def create_asset(folder: str, asset_type: str, body: AssetCreate):
-    asset = body.asset.strip()
-    if not asset:
-        raise HTTPException(status_code=400, detail="Asset name is required.")
-    asset_type = asset_type.strip().lower()
+    folder = _validate_id(folder, "Project folder")
+    asset_type = _validate_id(asset_type.strip().lower(), "Asset type")
+    asset = _validate_id((body.asset or "").strip(), "Asset name")
     with _write_lock:
         work_dir = pipeline.asset_work_houdini(folder, asset_type, asset)
         if work_dir.exists():
@@ -308,15 +354,18 @@ def create_asset(folder: str, asset_type: str, body: AssetCreate):
 
 @_r_assets.delete("/projects/{folder}/assets/{asset_type}/{asset}", status_code=200)
 def delete_asset(folder: str, asset_type: str, asset: str, delete_files: bool = False):
-    asset_dir = pipeline.projects_root() / folder / "assets" / asset_type / asset
-    if not asset_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Asset '{asset}' not found.")
+    folder = _validate_id(folder, "Project folder")
+    asset_type = _validate_id(asset_type, "Asset type")
+    asset = _validate_id(asset, "Asset name")
     if not delete_files:
         raise HTTPException(
             status_code=400,
             detail="Asset has no separate metadata record. Pass ?delete_files=true to remove from filesystem.",
         )
     with _write_lock:
+        asset_dir = pipeline.projects_root() / folder / "assets" / asset_type / asset
+        if not asset_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Asset '{asset}' not found.")
         shutil.rmtree(asset_dir)
     return {"deleted": asset}
 
@@ -329,6 +378,7 @@ def delete_asset(folder: str, asset_type: str, asset: str, delete_files: bool = 
 def get_publishes(project: str = None):
     try:
         if project:
+            project = _validate_id(project, "Project folder")
             idx = pipeline.read_project_index(project)
             return idx.get("publishes", []) if idx else []
         all_pubs = []
@@ -340,6 +390,8 @@ def get_publishes(project: str = None):
             if idx:
                 all_pubs.extend(idx.get("publishes", []))
         return all_pubs
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -349,16 +401,20 @@ def rebuild_index(project: str = None):
     with _write_lock:
         try:
             if project:
+                project = _validate_id(project, "Project folder")
                 pipeline.write_project_index(project)
                 return {"rebuilt": project}
             pipeline.scan_all_projects()
             return {"rebuilt": "all"}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
-# Register routers — must happen before the static catch-all mount
+# Register routers — must happen before the static catch-all mount so that
+# all /api routes take priority and can never be intercepted by StaticFiles.
 # ---------------------------------------------------------------------------
 
 app.include_router(_r_projects)
@@ -367,8 +423,13 @@ app.include_router(_r_shots)
 app.include_router(_r_assets)
 app.include_router(_r_publishes)
 
+
 # ---------------------------------------------------------------------------
-# Serve the React web UI
+# Root route + React web UI static files
+#
+# Static files are mounted at /ui (not /) so that the /api prefix is never
+# shadowed regardless of whether the dist directory exists. The root handler
+# below serves index.html directly when the build is present.
 # ---------------------------------------------------------------------------
 
 @app.get("/")
@@ -377,12 +438,12 @@ def serve_index():
     if index.exists():
         return FileResponse(index)
     return JSONResponse(
-        {"message": "Web UI not built yet. Run: cd web && npm install && npm run build"},
+        {"status": "ok", "message": "FX Pipeline API is running. Web UI not built — run: cd web && npm install && npm run build"},
         status_code=200,
     )
 
 if _WEB_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(_WEB_DIST), html=True), name="static")
+    app.mount("/ui", StaticFiles(directory=str(_WEB_DIST), html=True), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +460,17 @@ def _port_bound(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.2)
         return s.connect_ex((host, port)) == 0
+
+
+def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Poll until host:port accepts connections or timeout expires. Returns True on success."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _port_bound(host, port):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def start_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True):
@@ -433,9 +505,15 @@ def start_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool =
         logger.info("Pipeline server started at http://%s:%d", host, port)
 
     if open_browser:
-        import time, webbrowser
-        time.sleep(0.8)  # Give uvicorn a moment to bind
-        webbrowser.open(f"http://{host}:{port}")
+        import webbrowser
+
+        def _open_when_ready():
+            if _wait_for_port(host, port, timeout=5.0):
+                webbrowser.open(f"http://{host}:{port}")
+            else:
+                logger.warning("Server did not become reachable within timeout; skipping browser open.")
+
+        threading.Thread(target=_open_when_ready, daemon=True, name="pipeline-browser-open").start()
 
 
 def stop_server():
@@ -458,7 +536,14 @@ def stop_server():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import webbrowser, time
-    print("Starting FX Pipeline Server at http://127.0.0.1:8765")
-    threading.Timer(1.0, lambda: webbrowser.open("http://127.0.0.1:8765")).start()
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
+    import webbrowser
+
+    _host, _port = "127.0.0.1", 8765
+    print(f"Starting FX Pipeline Server at http://{_host}:{_port}")
+
+    def _open_when_ready():
+        if _wait_for_port(_host, _port, timeout=10.0):
+            webbrowser.open(f"http://{_host}:{_port}")
+
+    threading.Thread(target=_open_when_ready, daemon=True).start()
+    uvicorn.run(app, host=_host, port=_port, log_level="info")
