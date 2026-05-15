@@ -354,11 +354,21 @@ _server_instance = None
 _server_thread   = None
 
 
+def _port_bound(host: str, port: int) -> bool:
+    """Return True if something is already listening on host:port."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.2)
+        return s.connect_ex((host, port)) == 0
+
+
 def start_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True):
     """Start the uvicorn server in a background thread. Safe to call from Houdini."""
     global _server_instance, _server_thread
 
-    if _server_thread and _server_thread.is_alive():
+    # Socket probe is the authoritative check — works even after a module reload
+    # that would have reset _server_thread to None.
+    if _port_bound(host, port):
         logger.info("Server already running at http://%s:%d", host, port)
         if open_browser:
             import webbrowser
