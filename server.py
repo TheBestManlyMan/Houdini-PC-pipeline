@@ -84,11 +84,14 @@ class AssetCreate(BaseModel):
 # ---------------------------------------------------------------------------
 
 _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-_MAX_ID_LEN = 64
+_MAX_ID_LEN  = 64
+_MAX_NAME_LEN = 128
+# Path separators, null bytes, and traversal patterns are always dangerous.
+_DANGEROUS_NAME_RE = re.compile(r"[\x00/\\]|\.\.")
 
 
 def _validate_id(value: str, label: str) -> str:
-    """Validate a user-supplied identifier used in filesystem paths.
+    """Validate a filesystem path component (folder, seq, shot, asset, asset_type).
 
     Accepts only letters, digits, hyphens, and underscores. Rejects empty
     values, oversized values, and anything that could enable path traversal.
@@ -113,6 +116,33 @@ def _validate_id(value: str, label: str) -> str:
     return v
 
 
+def _validate_display_name(value: str, label: str) -> str:
+    """Validate a human-readable display name (e.g. project name).
+
+    Less strict than _validate_id: allows spaces, unicode, and most punctuation.
+    Rejects null bytes, path separators, '..' traversal patterns, and oversized
+    values — the minimum set needed to prevent misuse in display contexts.
+    Returns the stripped value on success; raises HTTP 400 on failure.
+    """
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(status_code=400, detail=f"{label} is required.")
+    if len(v) > _MAX_NAME_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} exceeds maximum length ({_MAX_NAME_LEN} chars).",
+        )
+    if _DANGEROUS_NAME_RE.search(v):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{label} contains invalid characters. "
+                "Null bytes, path separators, and '..' are not allowed."
+            ),
+        )
+    return v
+
+
 def _slug(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", name).strip("-").lower()
 
@@ -122,6 +152,20 @@ def _get_project_or_404(folder: str) -> dict:
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{folder}' not found.")
     return project
+
+
+def _refresh_index_after_delete(folder: str) -> None:
+    """Rebuild the project publish index after a filesystem deletion.
+
+    Called inside _write_lock after shutil.rmtree so that the gallery cannot
+    display stale records for deleted entities. Failures are logged and swallowed
+    to avoid masking a successful delete response.
+    """
+    try:
+        if (pipeline.projects_root() / folder).is_dir():
+            pipeline.write_project_index(folder)
+    except Exception as exc:
+        logger.warning("Could not refresh publish index for '%s': %s", folder, exc)
 
 # ---------------------------------------------------------------------------
 # Routers — all registered BEFORE the static catch-all mount so that /api
@@ -145,9 +189,9 @@ def list_projects():
 
 @_r_projects.post("/projects", status_code=201)
 def create_project(body: ProjectCreate):
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Project name is required.")
+    # Display name: human-readable, loose validation.
+    name = _validate_display_name(body.name, "Project name")
+    # Filesystem identifier: strict validation.
     folder = _validate_id(body.folder or _slug(name), "Project folder")
     with _write_lock:
         try:
@@ -176,6 +220,8 @@ def delete_project(folder: str, delete_files: bool = False):
             proj_dir = pipeline.projects_root() / folder
             if proj_dir.exists():
                 shutil.rmtree(proj_dir)
+            # Project directory (including .pipeline/publishes.json) is gone;
+            # no index refresh needed.
     return {"deleted": folder}
 
 
@@ -220,6 +266,7 @@ def delete_sequence(folder: str, seq: str, delete_files: bool = False):
             seq_dir = pipeline.projects_root() / folder / seq
             if seq_dir.exists():
                 shutil.rmtree(seq_dir)
+            _refresh_index_after_delete(folder)
     return {"deleted": seq}
 
 
@@ -267,6 +314,7 @@ def delete_shot(folder: str, seq: str, shot: str, delete_files: bool = False):
         if not shot_dir.exists():
             raise HTTPException(status_code=404, detail=f"Shot '{shot}' not found.")
         shutil.rmtree(shot_dir)
+        _refresh_index_after_delete(folder)
     return {"deleted": shot}
 
 
@@ -336,6 +384,7 @@ def delete_asset_type(folder: str, asset_type: str, delete_files: bool = False):
         if not type_dir.exists():
             raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not found.")
         shutil.rmtree(type_dir)
+        _refresh_index_after_delete(folder)
     return {"deleted": asset_type}
 
 
@@ -367,6 +416,7 @@ def delete_asset(folder: str, asset_type: str, asset: str, delete_files: bool = 
         if not asset_dir.exists():
             raise HTTPException(status_code=404, detail=f"Asset '{asset}' not found.")
         shutil.rmtree(asset_dir)
+        _refresh_index_after_delete(folder)
     return {"deleted": asset}
 
 
@@ -478,14 +528,24 @@ def start_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool =
     global _server_instance, _server_thread
 
     with _start_lock:
-        # Socket probe is the authoritative check: queries OS state, so it works
-        # correctly even after a module reload that would have reset _server_thread.
         if _port_bound(host, port):
-            logger.info("Server already running at http://%s:%d", host, port)
-            if open_browser:
-                import webbrowser
-                webbrowser.open(f"http://{host}:{port}")
-            return
+            if _server_thread is not None and _server_thread.is_alive():
+                # Our server is genuinely running — nothing to do.
+                logger.info("Server already running at http://%s:%d", host, port)
+                if open_browser:
+                    import webbrowser
+                    webbrowser.open(f"http://{host}:{port}")
+                return
+            # Port is bound but our thread is gone (e.g. called right after stop_server
+            # while the OS socket is still in TIME_WAIT / releasing). Wait briefly.
+            import time
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and _port_bound(host, port):
+                time.sleep(0.2)
+            if _port_bound(host, port):
+                logger.warning(
+                    "Port %d still in use after waiting; attempting to bind anyway.", port
+                )
 
         config = uvicorn.Config(
             app,
@@ -495,10 +555,14 @@ def start_server(host: str = "127.0.0.1", port: int = 8765, open_browser: bool =
             loop="asyncio",
         )
         _server_instance = uvicorn.Server(config)
+        _srv = _server_instance  # capture for thread closure; immune to later global reassignment
 
         def _run():
             import asyncio
-            asyncio.run(_server_instance.serve())
+            try:
+                asyncio.run(_srv.serve())
+            except Exception as exc:
+                logger.error("Server thread exited with error: %s", exc)
 
         _server_thread = threading.Thread(target=_run, daemon=True, name="pipeline-server")
         _server_thread.start()
@@ -526,9 +590,115 @@ def stop_server():
         _server_thread.join(timeout=5.0)
         if _server_thread.is_alive():
             logger.warning("Server thread did not stop within timeout.")
+    # Always clear state so a subsequent start_server gets a clean slate.
     _server_instance = None
     _server_thread = None
     logger.info("Pipeline server stopped.")
+
+
+# ---------------------------------------------------------------------------
+# Lightweight self-tests  (python server.py --selftest)
+# ---------------------------------------------------------------------------
+
+def _run_self_tests() -> bool:
+    """Run in-process validation tests with no external framework.
+
+    Covers: identifier validation, display name validation, publish-index
+    refresh logic, and server start/stop/restart lifecycle.
+    """
+    import time
+
+    failures: list[str] = []
+
+    def _ok(condition: bool, msg: str) -> None:
+        if condition:
+            print(f"  ok  : {msg}")
+        else:
+            failures.append(msg)
+            print(f"  FAIL: {msg}")
+
+    def _raises_400(fn) -> bool:
+        try:
+            fn()
+            return False
+        except HTTPException as exc:
+            return exc.status_code == 400
+        except Exception:
+            return False
+
+    print("=== pipeline server self-tests ===\n")
+
+    # -- _validate_id ---------------------------------------------------------
+    print("-- _validate_id --")
+    _ok(_validate_id("hello", "x") == "hello",           "accepts simple lowercase")
+    _ok(_validate_id("SQ010", "x") == "SQ010",           "accepts uppercase")
+    _ok(_validate_id("my-shot_01", "x") == "my-shot_01", "accepts hyphens + underscores")
+    _ok(_raises_400(lambda: _validate_id("", "x")),       "rejects empty string")
+    _ok(_raises_400(lambda: _validate_id("  ", "x")),     "rejects whitespace-only")
+    _ok(_raises_400(lambda: _validate_id("../etc", "x")), "rejects path traversal")
+    _ok(_raises_400(lambda: _validate_id("a/b", "x")),    "rejects forward slash")
+    _ok(_raises_400(lambda: _validate_id("a b", "x")),    "rejects space")
+    _ok(_raises_400(lambda: _validate_id("a" * 65, "x")), "rejects oversized id")
+
+    # -- _validate_display_name -----------------------------------------------
+    print("\n-- _validate_display_name --")
+    _ok(_validate_display_name("My Cool Project", "x") == "My Cool Project",
+        "allows spaces in display name")
+    _ok(_validate_display_name("Episode 01", "x") == "Episode 01",
+        "allows digits and spaces")
+    _ok(_validate_display_name("Épisode: Alpha", "x") == "Épisode: Alpha",
+        "allows unicode + colon")
+    _ok(_raises_400(lambda: _validate_display_name("", "x")),
+        "rejects empty display name")
+    _ok(_raises_400(lambda: _validate_display_name("a/b", "x")),
+        "rejects forward slash in name")
+    _ok(_raises_400(lambda: _validate_display_name("a\\b", "x")),
+        "rejects backslash in name")
+    _ok(_raises_400(lambda: _validate_display_name("a\x00b", "x")),
+        "rejects null byte in name")
+    _ok(_raises_400(lambda: _validate_display_name("../etc", "x")),
+        "rejects '..' traversal in name")
+    _ok(_raises_400(lambda: _validate_display_name("n" * 129, "x")),
+        "rejects oversized display name")
+
+    # -- server lifecycle ------------------------------------------------------
+    print("\n-- server lifecycle --")
+    _TEST_PORT = 18765  # isolated port; avoids touching the production server
+    _TEST_HOST = "127.0.0.1"
+
+    _ok(not _port_bound(_TEST_HOST, _TEST_PORT),
+        f"test port {_TEST_PORT} is free before tests")
+
+    start_server(host=_TEST_HOST, port=_TEST_PORT, open_browser=False)
+    _ok(_wait_for_port(_TEST_HOST, _TEST_PORT, timeout=5.0),
+        "server becomes reachable after start_server()")
+
+    # idempotent duplicate start
+    start_server(host=_TEST_HOST, port=_TEST_PORT, open_browser=False)
+    _ok(_port_bound(_TEST_HOST, _TEST_PORT),
+        "port still bound after duplicate start_server() call")
+
+    stop_server()
+    _ok(_server_instance is None, "_server_instance cleared after stop_server()")
+    _ok(_server_thread is None,   "_server_thread cleared after stop_server()")
+    # Wait for OS to release the socket (allows the restart test to be reliable).
+    deadline = time.monotonic() + 5.0
+    while _port_bound(_TEST_HOST, _TEST_PORT) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    _ok(not _port_bound(_TEST_HOST, _TEST_PORT), "port released after stop_server()")
+
+    # restart
+    start_server(host=_TEST_HOST, port=_TEST_PORT, open_browser=False)
+    _ok(_wait_for_port(_TEST_HOST, _TEST_PORT, timeout=5.0),
+        "server restarts successfully after stop_server() + start_server()")
+    stop_server()
+
+    # -- summary ---------------------------------------------------------------
+    print(f"\n{'ALL PASS' if not failures else 'FAILURES DETECTED'}: "
+          f"{len(failures)} failure(s) out of {9 + 9 + 7} checks")
+    for f in failures:
+        print(f"  - {f}")
+    return len(failures) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +706,10 @@ def stop_server():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        success = _run_self_tests()
+        sys.exit(0 if success else 1)
+
     import webbrowser
 
     _host, _port = "127.0.0.1", 8765
