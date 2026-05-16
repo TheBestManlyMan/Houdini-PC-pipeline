@@ -49,6 +49,7 @@ FORMAT_COLORS = {
 
 _USD_ROP_TYPES = {"usd_rop", "usdrender_rop", "usd", "rop_usdrender"}
 _KARMA_RS_TYPES = {"karmarendersettings", "karmarendersettings::2.0"}
+_GLTF_ROP_TYPES = {"rop_gltf", "gltf", "rop_gltfchar"}
 
 # ---------------------------------------------------------------------------
 # Helpers — asset publish
@@ -1334,6 +1335,459 @@ class _RenderTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Helpers — GLB publish
+# ---------------------------------------------------------------------------
+
+def _scan_gltf_rops() -> list:
+    """Return OUT_* nodes in /out whose type is a known GLTF ROP."""
+    try:
+        import hou
+    except ImportError:
+        raise RuntimeError("Must run inside Houdini.")
+    results = []
+    for node in hou.node("/out").children():
+        if node.name().upper().startswith(ROP_PREFIX):
+            if node.type().name() in _GLTF_ROP_TYPES:
+                results.append(node)
+    return results
+
+
+def _capture_viewport_thumbnail(out_path: Path):
+    """Snapshot the first SceneViewer pane into out_path (JPEG)."""
+    try:
+        import hou
+        viewers = _list_scene_viewers()
+        if not viewers:
+            return False
+        viewers[0].curViewport().snapshot(str(out_path))
+        return out_path.exists()
+    except Exception as e:
+        logger.warning("Thumbnail capture failed: %s", e)
+        return False
+
+
+def _export_glb_from_rop(node, out_path: Path, frame_range: tuple, animated: bool):
+    """Tell a GLTF ROP to render into out_path."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    file_parm = node.parm("file") or node.parm("sopoutput") or node.parm("filename")
+    if file_parm is None:
+        raise RuntimeError(f"Cannot find output path parm on {node.name()}")
+    file_parm.set(str(out_path))
+    if animated:
+        trange = node.parm("trange")
+        if trange is not None:
+            trange.set(1)
+        f1, f2 = node.parm("f1"), node.parm("f2")
+        if f1 is not None:
+            f1.deleteAllKeyframes(); f1.set(frame_range[0])
+        if f2 is not None:
+            f2.deleteAllKeyframes(); f2.set(frame_range[1])
+    exec_parm = node.parm("execute")
+    if exec_parm is not None:
+        exec_parm.pressButton()
+    else:
+        node.render()
+    if not out_path.exists():
+        raise RuntimeError(f"GLB not found after cook: {out_path}")
+
+
+def _export_glb_from_sop(sop_path: str, out_path: Path, frame_range: tuple, animated: bool):
+    """
+    Create a temporary GLTF ROP in /out, point it at sop_path, render, then destroy it.
+    Falls back with a clear error if rop_gltf is not available.
+    """
+    try:
+        import hou
+    except ImportError:
+        raise RuntimeError("Must run inside Houdini.")
+
+    rop_parent = hou.node("/out")
+    available_types = {t.name() for t in hou.ropNodeTypeCategory().nodeTypes().values()}
+    gltf_type = next((t for t in _GLTF_ROP_TYPES if t in available_types), None)
+    if gltf_type is None:
+        raise RuntimeError(
+            "No GLTF ROP type found in this Houdini build.\n"
+            "Create an OUT_* GLTF ROP in /out to use ROP mode instead."
+        )
+
+    tmp = rop_parent.createNode(gltf_type, "__glb_publisher_tmp__")
+    try:
+        _export_glb_from_rop(tmp, out_path, frame_range, animated)
+        # Point at the user's SOP after creation (parm name varies by version)
+        for pname in ("soppath", "sop", "inputnode"):
+            p = tmp.parm(pname)
+            if p is not None:
+                p.set(sop_path)
+                break
+        exec_parm = tmp.parm("execute")
+        if exec_parm is not None:
+            exec_parm.pressButton()
+        else:
+            tmp.render()
+    finally:
+        tmp.destroy()
+
+    if not out_path.exists():
+        raise RuntimeError(f"GLB not found after cook: {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# _GlbRopRow  (mirrors _RopRow for GLTF ROPs)
+# ---------------------------------------------------------------------------
+
+class _GlbRopRow(QWidget):
+    toggled = Signal(bool)
+
+    def __init__(self, node, parent=None):
+        super().__init__(parent)
+        self._node = node
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+
+        self._check = QCheckBox(node.name())
+        font = self._check.font()
+        font.setBold(True)
+        self._check.setFont(font)
+        self._check.setChecked(True)
+        self._check.toggled.connect(self.toggled)
+
+        tag = QLabel("GLB")
+        tag.setStyleSheet(
+            "color: white; background: #7a4ae2; border-radius: 3px; padding: 1px 5px;"
+        )
+        tag.setFixedWidth(36)
+
+        self._anim_check = QCheckBox("Animated")
+        f1, f2 = _rop_frame_range(node)
+        self._frame_start = QSpinBox()
+        self._frame_start.setRange(1, 99999)
+        self._frame_start.setValue(f1)
+        self._frame_start.setFixedWidth(64)
+        self._frame_end = QSpinBox()
+        self._frame_end.setRange(1, 99999)
+        self._frame_end.setValue(f2)
+        self._frame_end.setFixedWidth(64)
+
+        layout.addWidget(self._check)
+        layout.addWidget(tag)
+        layout.addWidget(self._anim_check)
+        layout.addWidget(QLabel("Frames:"))
+        layout.addWidget(self._frame_start)
+        layout.addWidget(QLabel("–"))
+        layout.addWidget(self._frame_end)
+        layout.addStretch()
+
+    def is_checked(self) -> bool:
+        return self._check.isChecked()
+
+    def is_animated(self) -> bool:
+        return self._anim_check.isChecked()
+
+    def frame_range(self) -> tuple:
+        return (self._frame_start.value(), self._frame_end.value())
+
+    @property
+    def node(self):
+        return self._node
+
+
+# ---------------------------------------------------------------------------
+# _GlbTab
+# ---------------------------------------------------------------------------
+
+class _GlbTab(QWidget):
+    def __init__(self, ctx: dict, parent=None):
+        super().__init__(parent)
+        self._ctx = ctx
+        self._rop_rows: list[_GlbRopRow] = []
+        self._build_ui()
+        self._connect_signals()
+        self._rescan()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(8)
+
+        # ---- Publish target ----
+        target_group = QGroupBox("Publish Target")
+        target_layout = QVBoxLayout(target_group)
+
+        proj_row = QHBoxLayout()
+        proj_row.addWidget(QLabel("Project:"))
+        self._project_combo = QComboBox()
+        try:
+            for proj in pipeline.load_projects():
+                self._project_combo.addItem(proj.get("name", ""), proj.get("folder", ""))
+        except Exception:
+            pass
+        if self._project_combo.count() == 0:
+            self._project_combo.addItem("test", "test")
+        proj_row.addWidget(self._project_combo, stretch=1)
+        target_layout.addLayout(proj_row)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Asset name:"))
+        self._asset_name_edit = QLineEdit()
+        self._asset_name_edit.setPlaceholderText("lowercase-kebab or snake_case")
+        ctx = self._ctx
+        self._asset_name_edit.setText(ctx["entity"].lower().replace(" ", "_"))
+        name_row.addWidget(self._asset_name_edit, stretch=1)
+        target_layout.addLayout(name_row)
+
+        tip = QLabel(
+            "Publishes to: {shows_root}/assets/{project}/{asset_name}/asset.glb"
+        )
+        tip.setStyleSheet("color: #888; font-size: 10px;")
+        target_layout.addWidget(tip)
+
+        self._overwrite_check = QCheckBox("Overwrite existing asset")
+        self._overwrite_check.setChecked(True)
+        target_layout.addWidget(self._overwrite_check)
+
+        root.addWidget(target_group)
+
+        # ---- GLB source ----
+        source_group = QGroupBox("GLB Source")
+        source_layout = QVBoxLayout(source_group)
+
+        mode_row = QHBoxLayout()
+        self._rop_mode_check = QCheckBox("Use GLTF ROP from /out  (OUT_* prefix)")
+        self._rop_mode_check.setChecked(True)
+        self._sop_mode_check = QCheckBox("Manual SOP path")
+        mode_row.addWidget(self._rop_mode_check)
+        mode_row.addWidget(self._sop_mode_check)
+        mode_row.addStretch()
+        source_layout.addLayout(mode_row)
+
+        # ROP list
+        rescan_row = QHBoxLayout()
+        rescan_row.addWidget(QLabel("GLTF ROPs found in /out:"))
+        rescan_row.addStretch()
+        self._rescan_btn = QPushButton("Rescan")
+        self._rescan_btn.setFixedWidth(72)
+        rescan_row.addWidget(self._rescan_btn)
+        source_layout.addLayout(rescan_row)
+
+        self._rop_scroll = QScrollArea()
+        self._rop_scroll.setWidgetResizable(True)
+        self._rop_scroll.setMaximumHeight(140)
+        scroll_inner = QWidget()
+        self._rop_list_layout = QVBoxLayout(scroll_inner)
+        self._rop_list_layout.setContentsMargins(2, 2, 2, 2)
+        self._rop_list_layout.setSpacing(2)
+        self._rop_list_layout.addStretch()
+        self._rop_scroll.setWidget(scroll_inner)
+        source_layout.addWidget(self._rop_scroll)
+
+        # Manual SOP path (hidden by default)
+        self._sop_row_widget = QWidget()
+        sop_row = QHBoxLayout(self._sop_row_widget)
+        sop_row.setContentsMargins(0, 0, 0, 0)
+        sop_row.addWidget(QLabel("SOP path:"))
+        self._sop_path_edit = QLineEdit()
+        self._sop_path_edit.setPlaceholderText("/obj/geo1/OUT")
+        sop_row.addWidget(self._sop_path_edit, stretch=1)
+        self._sop_row_widget.setVisible(False)
+        source_layout.addWidget(self._sop_row_widget)
+
+        root.addWidget(source_group)
+
+        # ---- Options ----
+        opts_group = QGroupBox("Options")
+        opts_layout = QVBoxLayout(opts_group)
+
+        self._thumb_check = QCheckBox("Capture viewport thumbnail")
+        self._thumb_check.setChecked(True)
+        opts_layout.addWidget(self._thumb_check)
+
+        root.addWidget(opts_group)
+
+        # ---- Description + status ----
+        root.addWidget(QLabel("Description:"))
+        self._desc_edit = QPlainTextEdit()
+        self._desc_edit.setMaximumHeight(60)
+        self._desc_edit.setPlaceholderText("Optional notes about this GLB asset…")
+        root.addWidget(self._desc_edit)
+
+        root.addWidget(QLabel("Tags (comma-separated):"))
+        self._tags_edit = QLineEdit()
+        self._tags_edit.setPlaceholderText("fx, sim, vehicle")
+        root.addWidget(self._tags_edit)
+
+        self._status_label = QLabel("")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setStyleSheet("padding: 4px; border-radius: 3px; background: transparent;")
+        root.addWidget(self._status_label)
+
+        root.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self._publish_btn = QPushButton("Publish GLB")
+        self._publish_btn.setStyleSheet(
+            "QPushButton { background: #5a2a9a; color: white; font-weight: bold;"
+            " padding: 6px 24px; border-radius: 4px; }"
+            "QPushButton:disabled { background: #444; color: #888; }"
+            "QPushButton:hover:enabled { background: #7a4ac0; }"
+        )
+        btn_row.addWidget(self._publish_btn)
+        root.addLayout(btn_row)
+
+    def _connect_signals(self):
+        self._rescan_btn.clicked.connect(self._rescan)
+        self._rop_mode_check.toggled.connect(self._on_mode_changed)
+        self._sop_mode_check.toggled.connect(self._on_mode_changed)
+        self._asset_name_edit.textChanged.connect(self._update_button_state)
+        self._publish_btn.clicked.connect(self._on_publish)
+
+    def _on_mode_changed(self):
+        rop_mode = self._rop_mode_check.isChecked()
+        self._rop_scroll.setVisible(rop_mode)
+        self._rescan_btn.setVisible(rop_mode)
+        self._sop_row_widget.setVisible(not rop_mode)
+        self._update_button_state()
+
+    def _rescan(self):
+        while self._rop_list_layout.count() > 1:
+            item = self._rop_list_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._rop_rows = []
+
+        try:
+            rops = _scan_gltf_rops()
+        except RuntimeError:
+            rops = []
+
+        for rop in rops:
+            row = _GlbRopRow(rop)
+            row.toggled.connect(self._update_button_state)
+            self._rop_list_layout.insertWidget(self._rop_list_layout.count() - 1, row)
+            self._rop_rows.append(row)
+
+        if not rops:
+            placeholder = QLabel(
+                "No OUT_* GLTF ROPs found in /out. Switch to Manual SOP mode,"
+                " or create an OUT_* rop_gltf node."
+            )
+            placeholder.setStyleSheet("color: #888; font-style: italic;")
+            placeholder.setWordWrap(True)
+            self._rop_list_layout.insertWidget(0, placeholder)
+
+        self._update_button_state()
+
+    def _update_button_state(self):
+        has_name = bool(self._asset_name_edit.text().strip())
+        rop_mode = self._rop_mode_check.isChecked()
+        if rop_mode:
+            has_source = any(row.is_checked() for row in self._rop_rows)
+        else:
+            has_source = bool(self._sop_path_edit.text().strip())
+        self._publish_btn.setEnabled(has_name and has_source)
+
+    def _set_status(self, msg: str, color: str = "#ccc"):
+        self._status_label.setStyleSheet(
+            f"padding: 4px; border-radius: 3px; background: #222; color: {color};"
+        )
+        self._status_label.setText(msg)
+        QApplication.processEvents()
+
+    def _on_publish(self):
+        asset_name_raw = self._asset_name_edit.text().strip()
+        if not asset_name_raw:
+            QMessageBox.warning(self, "Missing Asset Name", "Enter an asset name.")
+            return
+
+        import re
+        asset_name = re.sub(r"[^\w\-]+", "_", asset_name_raw).strip("_").lower()
+        if not asset_name:
+            QMessageBox.warning(self, "Invalid Asset Name", "Asset name is invalid after sanitising.")
+            return
+
+        project_folder = self._project_combo.currentData() or self._project_combo.currentText()
+        dest_dir = pipeline.projects_root() / "assets" / project_folder / asset_name
+
+        if dest_dir.exists() and not self._overwrite_check.isChecked():
+            QMessageBox.warning(
+                self, "Already Exists",
+                f"Asset already exists at:\n{dest_dir}\n\nEnable 'Overwrite' to replace it."
+            )
+            return
+
+        self._publish_btn.setEnabled(False)
+        try:
+            self._do_publish(asset_name, project_folder, dest_dir)
+        except Exception as e:
+            self._set_status(f"GLB publish failed: {e}", "#f88")
+            logger.error("GLB publish failed: %s", e, exc_info=True)
+            QMessageBox.critical(self, "Publish Failed", str(e))
+        finally:
+            self._publish_btn.setEnabled(True)
+
+    def _do_publish(self, asset_name: str, project_folder: str, dest_dir: Path):
+        import datetime
+        import json
+
+        ctx = self._ctx
+        rop_mode = self._rop_mode_check.isChecked()
+        checked_rows = [r for r in self._rop_rows if r.is_checked()]
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        glb_path = dest_dir / "asset.glb"
+
+        if rop_mode:
+            if not checked_rows:
+                raise RuntimeError("No GLTF ROP selected.")
+            row = checked_rows[0]  # publish the first checked ROP
+            animated = row.is_animated()
+            frame_range = row.frame_range()
+            self._set_status(f"Exporting GLB via {row.node.name()}…", "#8cf")
+            _export_glb_from_rop(row.node, glb_path, frame_range, animated)
+        else:
+            sop_path = self._sop_path_edit.text().strip()
+            if not sop_path:
+                raise RuntimeError("No SOP path provided.")
+            animated = False
+            frame_range = (1, 1)
+            self._set_status(f"Exporting GLB from {sop_path}…", "#8cf")
+            _export_glb_from_sop(sop_path, glb_path, frame_range, animated)
+
+        if self._thumb_check.isChecked():
+            self._set_status("Capturing thumbnail…", "#8cf")
+            _capture_viewport_thumbnail(dest_dir / "thumbnail.jpg")
+
+        # Metadata
+        try:
+            import hou
+            houdini_version = hou.applicationVersionString()
+        except Exception:
+            houdini_version = ""
+
+        tags = [t.strip() for t in self._tags_edit.text().split(",") if t.strip()]
+        meta = {
+            "name": asset_name.replace("_", " ").replace("-", " ").title(),
+            "author": os.getenv("USER", "artist"),
+            "created": datetime.datetime.utcnow().isoformat() + "Z",
+            "houdini_version": houdini_version,
+            "frame_range": list(frame_range),
+            "tags": tags,
+            "animations": ["Main"] if animated else [],
+            "polycount": 0,
+            "project": project_folder,
+            "asset_name": asset_name,
+            "description": self._desc_edit.toPlainText().strip(),
+            "source_node": checked_rows[0].node.path() if rop_mode and checked_rows else "",
+        }
+        (dest_dir / "metadata.json").write_text(
+            json.dumps(meta, indent=2), encoding="utf-8"
+        )
+
+        self._set_status(f"Published → {dest_dir}", "#4e4")
+        logger.info("GLB published: %s", dest_dir)
+
+
+# ---------------------------------------------------------------------------
 # PublisherWindow
 # ---------------------------------------------------------------------------
 
@@ -1394,6 +1848,7 @@ class PublisherWindow(QMainWindow):
         self._tabs.addTab(_AssetTab(ctx, asset_version), "Asset")
         self._tabs.addTab(_FlipbookTab(ctx, flipbook_version), "Flipbook")
         self._tabs.addTab(_RenderTab(ctx, render_version), "Render")
+        self._tabs.addTab(_GlbTab(ctx), "3D Asset (GLB)")
 
     def _fatal_ctx(self, msg: str):
         self.setWindowTitle("FX Publisher — Context Error")
@@ -1404,18 +1859,11 @@ class PublisherWindow(QMainWindow):
         self._ctx_banner.setStyleSheet(
             "background: #3a1a1a; color: #f88; padding: 8px; border-radius: 4px;"
         )
-        asset_tab = QWidget()
-        QVBoxLayout(asset_tab).addWidget(
-            QLabel("Cannot load publisher — fix context error above.")
-        )
-        flipbook_tab = QWidget()
-        QVBoxLayout(flipbook_tab).addWidget(QLabel(""))
-        render_tab = QWidget()
-        QVBoxLayout(render_tab).addWidget(QLabel(""))
-
-        self._tabs.addTab(asset_tab, "Asset")
-        self._tabs.addTab(flipbook_tab, "Flipbook")
-        self._tabs.addTab(render_tab, "Render")
+        for label in ("Asset", "Flipbook", "Render", "3D Asset (GLB)"):
+            tab = QWidget()
+            msg = "Cannot load publisher — fix context error above." if label == "Asset" else ""
+            QVBoxLayout(tab).addWidget(QLabel(msg))
+            self._tabs.addTab(tab, label)
 
         for i in range(self._tabs.count()):
             self._tabs.setTabEnabled(i, False)
