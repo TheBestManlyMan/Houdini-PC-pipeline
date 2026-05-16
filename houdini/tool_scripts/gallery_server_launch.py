@@ -105,7 +105,7 @@ os.makedirs(os.path.dirname(_log_file), exist_ok=True)
 try:
     with open(_log_file, "a") as _lf:
         subprocess.Popen(
-            [sys.executable, _api_server, "--host", "0.0.0.0"],
+            ["python3", _api_server, "--host", "0.0.0.0"],
             stdout=_lf,
             stderr=_lf,
         )
