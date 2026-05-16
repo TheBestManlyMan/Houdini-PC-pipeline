@@ -1339,16 +1339,36 @@ class _RenderTab(QWidget):
 # ---------------------------------------------------------------------------
 
 def _scan_gltf_rops() -> list:
-    """Return OUT_* nodes in /out whose type is a known GLTF ROP."""
+    """
+    Search the whole scene for GLTF ROP nodes.
+    Covers /obj/**/* (e.g. /obj/SIM/OUT_SNOWMAN_GLTF) and /out/* as fallback.
+    """
     try:
         import hou
     except ImportError:
         raise RuntimeError("Must run inside Houdini.")
     results = []
-    for node in hou.node("/out").children():
-        if node.name().upper().startswith(ROP_PREFIX):
-            if node.type().name() in _GLTF_ROP_TYPES:
-                results.append(node)
+    seen = set()
+
+    def _collect(node):
+        for child in node.allSubChildren():
+            if child.path() in seen:
+                continue
+            seen.add(child.path())
+            if child.type().name() in _GLTF_ROP_TYPES:
+                results.append(child)
+
+    obj_root = hou.node("/obj")
+    if obj_root:
+        _collect(obj_root)
+
+    # Also check /out in case someone put one there
+    out_root = hou.node("/out")
+    if out_root:
+        for child in out_root.children():
+            if child.path() not in seen and child.type().name() in _GLTF_ROP_TYPES:
+                results.append(child)
+
     return results
 
 
@@ -1444,7 +1464,8 @@ class _GlbRopRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
 
-        self._check = QCheckBox(node.name())
+        # Show full path so identically-named nodes in different subnets are distinguishable
+        self._check = QCheckBox(node.path())
         font = self._check.font()
         font.setBold(True)
         self._check.setFont(font)
@@ -1551,7 +1572,7 @@ class _GlbTab(QWidget):
         source_layout = QVBoxLayout(source_group)
 
         mode_row = QHBoxLayout()
-        self._rop_mode_check = QCheckBox("Use GLTF ROP from /out  (OUT_* prefix)")
+        self._rop_mode_check = QCheckBox("Use GLTF ROP  (scans all of /obj and /out)")
         self._rop_mode_check.setChecked(True)
         self._sop_mode_check = QCheckBox("Manual SOP path")
         mode_row.addWidget(self._rop_mode_check)
@@ -1668,8 +1689,9 @@ class _GlbTab(QWidget):
 
         if not rops:
             placeholder = QLabel(
-                "No OUT_* GLTF ROPs found in /out. Switch to Manual SOP mode,"
-                " or create an OUT_* rop_gltf node."
+                "No GLTF ROP nodes found in /obj or /out.\n"
+                "Add a ROP GLTF Output node (e.g. /obj/SIM/OUT_SNOWMAN_GLTF)"
+                " or switch to Manual SOP mode."
             )
             placeholder.setStyleSheet("color: #888; font-style: italic;")
             placeholder.setWordWrap(True)
