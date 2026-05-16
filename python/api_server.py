@@ -8,7 +8,9 @@ Endpoints:
     GET /api/index/{folder}     — full index dict for one project
     POST /api/reindex           — rebuild all project indexes
     POST /api/reindex/{folder}  — rebuild index for one project
-    GET /media/{path}           — serve media files (thumbnails, mp4s) from shows dir
+    GET /api/assets             — list all 3D GLB assets
+    GET /api/assets/{project}/{name} — get single 3D asset metadata
+    GET /media/{path}           — serve media files (thumbnails, mp4s, GLBs) from shows dir
 """
 
 import sys
@@ -16,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import json
 import logging
 import logging.config
 import logging.handlers
@@ -201,6 +204,91 @@ def reindex_project(folder: str):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# 3D Asset endpoints
+# ---------------------------------------------------------------------------
+
+def _discover_assets(request: Request) -> list[dict]:
+    """
+    Recursively scan {shows_root}/assets/{project}/{name}/
+    and return a list of asset dicts enriched with HTTP URLs.
+    """
+    assets_root = _shows_root / "assets"
+    if not assets_root.exists():
+        return []
+
+    base_url = str(request.base_url).rstrip("/")
+    results = []
+
+    for meta_path in sorted(assets_root.rglob("metadata.json")):
+        asset_dir = meta_path.parent
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning("Bad metadata.json at %s: %s", meta_path, e)
+            continue
+
+        # Derive project and asset_name from directory structure
+        # Expected: assets/{project}/{asset_name}/
+        try:
+            rel = asset_dir.relative_to(assets_root)
+            parts = rel.parts
+            project = parts[0] if len(parts) >= 1 else "unknown"
+            asset_name = parts[1] if len(parts) >= 2 else asset_dir.name
+        except ValueError:
+            project = "unknown"
+            asset_name = asset_dir.name
+
+        # Build media URLs using the already-mounted /media/ static route
+        rel_to_shows = asset_dir.relative_to(_shows_root)
+        media_prefix = f"{base_url}/media/{rel_to_shows.as_posix()}"
+
+        glb_path = asset_dir / "asset.glb"
+        thumb_path = asset_dir / "thumbnail.jpg"
+
+        record = {
+            **meta,
+            "project": meta.get("project") or project,
+            "asset_name": meta.get("asset_name") or asset_name,
+            "glb_url": f"{media_prefix}/asset.glb" if glb_path.exists() else None,
+            "thumbnail_url": f"{media_prefix}/thumbnail.jpg" if thumb_path.exists() else None,
+        }
+        results.append(record)
+
+    return results
+
+
+@app.get("/api/assets")
+def list_assets(request: Request):
+    """Return all discovered 3D GLB assets."""
+    return _discover_assets(request)
+
+
+@app.get("/api/assets/{project}/{name}")
+def get_asset(project: str, name: str, request: Request):
+    """Return metadata for a single 3D asset."""
+    meta_path = _shows_root / "assets" / project / name / "metadata.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail=f"Asset '{project}/{name}' not found")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    asset_dir = meta_path.parent
+    rel_to_shows = asset_dir.relative_to(_shows_root)
+    base_url = str(request.base_url).rstrip("/")
+    media_prefix = f"{base_url}/media/{rel_to_shows.as_posix()}"
+
+    return {
+        **meta,
+        "project": project,
+        "asset_name": name,
+        "glb_url": f"{media_prefix}/asset.glb" if (asset_dir / "asset.glb").exists() else None,
+        "thumbnail_url": f"{media_prefix}/thumbnail.jpg" if (asset_dir / "thumbnail.jpg").exists() else None,
+    }
 
 
 # ---------------------------------------------------------------------------

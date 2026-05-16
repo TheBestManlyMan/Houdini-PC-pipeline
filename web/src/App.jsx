@@ -1,8 +1,11 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, lazy, Suspense } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import PublishGrid from './components/PublishGrid.jsx'
 import DetailPanel from './components/DetailPanel.jsx'
 import Toolbar from './components/Toolbar.jsx'
+
+// Lazy-load the 3D asset browser so Three.js doesn't ship in the initial bundle
+const AssetBrowser = lazy(() => import('./components/assets/AssetBrowser.jsx'))
 import { usePublishes } from './hooks/usePublishes.js'
 import { useFilters } from './hooks/useFilters.js'
 import { contextLabel, formatRelative, publishTypeColor, statusLabel, versionLabel } from './utils/format.js'
@@ -81,6 +84,11 @@ export default function App() {
             viewMode={viewMode}
             onSelect={setSelectedId}
           />
+        )}
+        {surface === 'assets' && (
+          <Suspense fallback={<div className="status-msg">Loading 3D viewer…</div>}>
+            <AssetBrowser />
+          </Suspense>
         )}
         {!loading && surface === 'manager' && (
           <PipelineManager projects={activeProjects} publishes={enhancedPublishes} />

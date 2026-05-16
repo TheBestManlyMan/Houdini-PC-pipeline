@@ -5,10 +5,19 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    // Proxy publish index JSON requests to a local file server if needed
   },
   build: {
     outDir: '../dist/gallery',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split Three.js + R3F into a separate lazy chunk
+          'three-vendor': ['three', '@react-three/fiber', '@react-three/drei'],
+        },
+      },
+    },
+    // Allow the 3D vendor bundle to be large without warnings
+    chunkSizeWarningLimit: 1500,
   },
 })
