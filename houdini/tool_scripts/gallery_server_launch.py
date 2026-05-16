@@ -102,12 +102,23 @@ print(f"[Pipeline] Tailscale: {ts_ip or 'not connected'} ({ts_status})")
 # ── Start API server ─────────────────────────────────────────────────────────
 _log_file = os.path.join(_root, "logs", "api_server.log")
 os.makedirs(os.path.dirname(_log_file), exist_ok=True)
+
+# Build a clean environment for the system Python process.
+# Houdini sets PYTHONHOME and PYTHONPATH to its own interpreter, which
+# causes system python3 to ignore user site-packages (where uvicorn lives).
+_env = os.environ.copy()
+_env.pop("PYTHONHOME", None)
+_env.pop("PYTHONNOUSERSITE", None)
+# Restore PYTHONPATH to only the pipeline package — drop Houdini's entries.
+_env["PYTHONPATH"] = os.path.join(_root, "python")
+
 try:
     with open(_log_file, "a") as _lf:
         subprocess.Popen(
             ["python3", _api_server, "--host", "0.0.0.0"],
             stdout=_lf,
             stderr=_lf,
+            env=_env,
         )
     print(f"[Pipeline] API server starting at {LOCAL_API}/api")
     print(f"[Pipeline] Log: {_log_file}")
