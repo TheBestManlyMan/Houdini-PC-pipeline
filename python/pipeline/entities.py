@@ -12,11 +12,19 @@ from .config import load_config, projects_root
 logger = logging.getLogger("pipeline")
 
 
-def load_projects() -> list[dict]:
+def load_projects(filter_missing: bool = True) -> list[dict]:
     if not _config._PROJECTS_PATH.exists():
         return []
     with open(_config._PROJECTS_PATH, "r") as f:
-        return json.load(f).get("projects", [])
+        projects = json.load(f).get("projects", [])
+    if not filter_missing:
+        return projects
+    root = projects_root()
+    valid = [p for p in projects if (root / p["folder"]).is_dir()]
+    missing = [p["folder"] for p in projects if p not in valid]
+    if missing:
+        logger.info("load_projects: skipping missing folders: %s", missing)
+    return valid
 
 
 def get_project(name: str) -> dict | None:

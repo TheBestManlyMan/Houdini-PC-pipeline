@@ -39,8 +39,10 @@ Return the configured projects root directory.
 
 ## Project registry
 
-### `load_projects() -> list[dict]`
-Return all projects from `projects.json`.
+### `load_projects(filter_missing: bool = True) -> list[dict]`
+Return projects from `projects.json`. When `filter_missing=True` (default), projects
+whose folder does not exist on disk are silently excluded — stale registry entries
+never surface to callers. Pass `filter_missing=False` to see the raw list.
 
 ### `get_project(name: str) -> dict | None`
 Look up a project by `name` or `folder`. Returns `None` if not found.
