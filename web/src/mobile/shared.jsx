@@ -548,14 +548,25 @@ export const GlbViewer = ({ src, entity }) => {
 // ───────────────────────── detail sub-views ─────────────────────────
 const FsHero = ({ pub, scrub, onScrub, fs, fe, frames }) => {
   const { ref, isFs, toggle } = useFullscreen()
+  const mp4   = pubMp4(pub)
   const thumb = pubThumbnail(pub)
   return (
     <div className="m-detail-hero" ref={ref}
-         onTouchStart={onScrub || undefined}
-         onTouchMove={onScrub || undefined}>
-      {thumb
-        ? <img src={thumb} alt=""/>
-        : <div style={{ width: '100%', height: '100%', background: 'var(--bg-2)' }}/>}
+         onTouchStart={!mp4 && onScrub ? onScrub : undefined}
+         onTouchMove={!mp4 && onScrub ? onScrub : undefined}>
+      {mp4
+        ? <video
+            key={mp4}
+            src={mp4}
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
+        : thumb
+          ? <img src={thumb} alt=""/>
+          : <div style={{ width: '100%', height: '100%', background: 'var(--bg-2)' }}/>}
       <div className="m-detail-hero-overlay">
         <span><TypeChip type={pubProductType(pub)}/></span>
         <span>F {scrub != null ? (fs + scrub) : (fs ?? '—')} / {fe ?? '—'} · {frames || 0} frames</span>
