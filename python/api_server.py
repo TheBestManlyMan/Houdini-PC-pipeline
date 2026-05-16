@@ -17,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import logging
+import logging.config
+import logging.handlers
 from typing import Optional
 
 import uvicorn
@@ -32,8 +34,50 @@ from pipeline.indexer import (
     scan_all_projects,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
+# ---------------------------------------------------------------------------
+# Logging — console + rotating file so crashes are visible after the fact
+# ---------------------------------------------------------------------------
+_LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "api_server.log"
+_LOG_FILE.parent.mkdir(exist_ok=True)
+
+_fmt = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+
+# Explicit per-logger config passed to uvicorn so its access/error logs also
+# land in the file.  backupCount=3 keeps at most ~6 MB of history.
+_UVICORN_LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {"format": _fmt},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stdout",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "default",
+            "filename": str(_LOG_FILE),
+            "maxBytes": 2 * 1024 * 1024,
+            "backupCount": 3,
+            "encoding": "utf-8",
+        },
+    },
+    "root": {"level": "INFO", "handlers": ["console", "file"]},
+    "loggers": {
+        "uvicorn":        {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
+        "uvicorn.error":  {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
+        "uvicorn.access": {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
+        "api_server":     {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
+        "pipeline":       {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
+    },
+}
+
+logging.config.dictConfig(_UVICORN_LOG_CONFIG)
 log = logging.getLogger("api_server")
+log.info("API server starting — log: %s", _LOG_FILE)
 
 app = FastAPI(title="Houdini Pipeline API", version="1.0")
 
@@ -167,4 +211,4 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(app, host=args.host, port=args.port, log_config=_UVICORN_LOG_CONFIG)

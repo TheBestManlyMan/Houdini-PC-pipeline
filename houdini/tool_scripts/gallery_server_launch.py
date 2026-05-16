@@ -100,13 +100,17 @@ ts_url = f"http://{ts_ip}:{WEB_PORT}" if ts_ip else None
 print(f"[Pipeline] Tailscale: {ts_ip or 'not connected'} ({ts_status})")
 
 # ── Start API server ─────────────────────────────────────────────────────────
+_log_file = os.path.join(_root, "logs", "api_server.log")
+os.makedirs(os.path.dirname(_log_file), exist_ok=True)
 try:
-    subprocess.Popen(
-        [sys.executable, _api_server, "--host", "0.0.0.0"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with open(_log_file, "a") as _lf:
+        subprocess.Popen(
+            [sys.executable, _api_server, "--host", "0.0.0.0"],
+            stdout=_lf,
+            stderr=_lf,
+        )
     print(f"[Pipeline] API server starting at {LOCAL_API}/api")
+    print(f"[Pipeline] Log: {_log_file}")
 except Exception as e:
     print(f"[Pipeline] WARNING: Could not start API server: {e}")
 
