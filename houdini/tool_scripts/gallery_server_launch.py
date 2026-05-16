@@ -115,7 +115,7 @@ _env["PYTHONPATH"] = os.path.join(_root, "python")
 try:
     with open(_log_file, "a") as _lf:
         subprocess.Popen(
-            ["python3", _api_server, "--host", "0.0.0.0"],
+            ["/usr/bin/python3", _api_server, "--host", "0.0.0.0"],
             stdout=_lf,
             stderr=_lf,
             env=_env,
