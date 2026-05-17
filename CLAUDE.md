@@ -23,19 +23,33 @@ Houdini-PC-pipeline/
       versioning.py          # Version scanning
       publish.py             # Hip/publish/preview path helpers
       cache.py               # Cache directory creation
-      metadata.py            # publish_meta.json read/write
+      metadata.py            # metadata.json read/write (schema v2)
       indexer.py             # Filesystem scanner → publishes.json
+      ffmpeg.py              # MP4 encoding wrappers
+      flipbook.py            # Houdini viewport capture
+      validation.py          # Centralised input validators
+      publish_schema.py      # PublishProduct dataclass contract
+      publish_product.py     # Builds PublishProduct by scanning publish dir
+      database.py            # SQLite cache (Asset Browser only — disk is canonical)
     api_server.py            # FastAPI server (port 8765) for web gallery
     file_manager.py          # PySide6 File Manager dialog
     publisher.py             # PySide6 Publisher dialog
-    publish_gallery.py       # Static HTML gallery generator (legacy)
+    asset_browser.py         # PySide6 Asset Browser (in-Houdini only)
+    naming_conventions.py    # STANDARD_TASKS list + task slug helpers
   houdini/
     tool_scripts/            # Shelf tool button scripts
   web/                       # React gallery frontend (Vite, port 5173)
   docs/
     pipeline_api.md          # python/pipeline/ function reference
+    architecture.md          # System overview and data flow diagrams
+    configuration.md         # Full config file reference
+    workflow.md              # End-to-end artist workflow tutorial
+    remote_access.md         # Tailscale setup and troubleshooting
+    troubleshooting.md       # Common problems and fixes
+    development.md           # Engineering conventions
   tests/
     test_pipeline.py         # Unit tests for the pipeline package
+  archive/                   # Superseded code preserved for reference (do not use)
   .gitignore
 ```
 
@@ -86,9 +100,9 @@ Houdini-PC-pipeline/
 
 1. **Check `python/pipeline/` first.** If a function exists for the task, use it. Never duplicate logic. Never build paths inline in other scripts. Import via `import pipeline` or `from pipeline import ...`.
 
-2. **`python/pipeline/` owns all logic.** UI files (`file_manager.py`, `publisher.py`, tool scripts) are thin — they call pipeline functions and display results. No path building or versioning logic in UI files.
+2. **`python/pipeline/` owns all logic.** UI files (`file_manager.py`, `publisher.py`, `asset_browser.py`, tool scripts) are thin — they call pipeline functions and display results. No path building or versioning logic in UI files.
 
-3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. `pipeline.py` loads config relative to its own location — no absolute paths in code.
+3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. The package loads config relative to its own location — no absolute paths in code.
 
 4. **Both contexts always.** Every function touching paths must handle:
    - Shot: `{projects_root}/{project}/{SEQ}/{SHOT}/`
@@ -107,6 +121,8 @@ Houdini-PC-pipeline/
 10. **After meaningful API changes** — update `docs/pipeline_api.md`.
 
 11. **Web gallery backend** lives in `python/api_server.py` (FastAPI, port 8765). Frontend lives in `web/` (React/Vite, port 5173). Start both with `start.sh`.
+
+12. **No new surfaces in the web app.** The gallery has three surfaces: Gallery, 3D Assets, Manager. Do not add more.
 
 ## Naming conventions
 
