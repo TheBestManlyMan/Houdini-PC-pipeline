@@ -262,6 +262,14 @@ button { color: inherit; cursor: pointer; }
   font-size: 10px;
 }
 .card-thumb-placeholder b, .procedural-preview b { font-size: 15px; }
+
+/* Per-type placeholder colour tints */
+.type-asset .card-thumb-placeholder,
+.type-asset.card-thumb-placeholder {
+  background:
+    radial-gradient(circle at 70% 30%, oklch(40% 0.12 290 / 0.35), transparent 45%),
+    linear-gradient(135deg, oklch(22% 0.02 290), oklch(12% 0.006 250));
+}
 .card-type-chip {
   position: absolute;
   top: 6px;
@@ -864,7 +872,8 @@ button { color: inherit; cursor: pointer; }
 .asset-browser {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 

@@ -4,7 +4,12 @@ export default function Toolbar({ surface, onSurface, viewMode, onViewMode, filt
   return (
     <div className="toolbar">
       <div className="toolbar-title">
-        <strong>{surface === 'gallery' ? 'Publish Gallery' : surface === 'manager' ? 'Pipeline Manager' : 'Mobile Review'}</strong>
+        <strong>
+          {surface === 'gallery' ? 'Publish Gallery'
+            : surface === 'assets'  ? '3D Assets'
+            : surface === 'manager' ? 'Pipeline Manager'
+            : 'Mobile Review'}
+        </strong>
         <span className={`conn conn-${mode}`}><i />{mode === 'live' ? 'Live' : mode === 'static' ? 'Static index' : 'Demo'}</span>
       </div>
       <input
@@ -30,7 +35,7 @@ export default function Toolbar({ surface, onSurface, viewMode, onViewMode, filt
         onChange={e => onFilter('publishType', e.target.value)}
       >
         <option value="">All types</option>
-        {['cache', 'flipbook', 'render', 'usd', 'hip'].map(t => (
+        {['cache', 'flipbook', 'render', 'usd', 'hip', 'asset'].map(t => (
           <option key={t} value={t}>{t}</option>
         ))}
       </select>

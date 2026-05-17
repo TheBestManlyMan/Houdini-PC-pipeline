@@ -4,10 +4,13 @@ import PublishGrid from './components/PublishGrid.jsx'
 import DetailPanel from './components/DetailPanel.jsx'
 import Toolbar from './components/Toolbar.jsx'
 
-// Lazy-load the 3D asset browser so Three.js doesn't ship in the initial bundle
+// Lazy-load heavy 3D components so Three.js doesn't ship in the initial bundle
 const AssetBrowser = lazy(() => import('./components/assets/AssetBrowser.jsx'))
+const AssetDetail  = lazy(() => import('./components/assets/AssetDetail.jsx'))
+
 import { usePublishes } from './hooks/usePublishes.js'
-import { useFilters } from './hooks/useFilters.js'
+import { useAssets }   from './hooks/useAssets.js'
+import { useFilters }  from './hooks/useFilters.js'
 import { contextLabel, formatRelative, publishTypeColor, statusLabel, versionLabel } from './utils/format.js'
 
 export default function App() {
@@ -19,19 +22,43 @@ export default function App() {
   const [reviewNotes, setReviewNotes] = useState({})
 
   const { publishes, projects, index, mode, source, warning, loading, error, refresh } = usePublishes(sidebarProject)
-  const enhancedPublishes = useMemo(() => publishes.map(p => ({
-    ...p,
-    status: reviewStatus[p.uuid] ?? p.status ?? 'review',
-    notes: [...(p.notes ?? []), ...(reviewNotes[p.uuid] ?? [])],
-  })), [publishes, reviewNotes, reviewStatus])
+  const { assets } = useAssets()
+
+  // Normalise 3D assets into publish-like records so they appear in the gallery
+  const assetPublishes = useMemo(() => assets.map(a => ({
+    uuid: `asset:${a.project}:${a.asset_name}`,
+    publish_type: 'asset',
+    entity: a.name || a.asset_name,
+    task: a.asset_name,
+    version: 1,
+    status: 'approved',
+    context: { type: 'asset' },
+    created_at: a.created || null,
+    created_by: a.author || '',
+    project: a.project,
+    notes: [],
+    outputs: { thumbnail: a.thumbnail_url || null, mp4: null },
+    _normalized: true,
+    _asset: a,
+  })), [assets])
+
+  const enhancedPublishes = useMemo(() => [
+    ...publishes.map(p => ({
+      ...p,
+      status: reviewStatus[p.uuid] ?? p.status ?? 'review',
+      notes: [...(p.notes ?? []), ...(reviewNotes[p.uuid] ?? [])],
+    })),
+    ...assetPublishes,
+  ], [publishes, assetPublishes, reviewNotes, reviewStatus])
+
   const { filtered, filters, setFilter, clearFilters } = useFilters(enhancedPublishes)
   const enhancedFiltered = useMemo(() => filtered.map(p => ({
     ...p,
-    status: reviewStatus[p.uuid] ?? p.status ?? 'review',
-    notes: [...(p.notes ?? []), ...(reviewNotes[p.uuid] ?? [])],
+    status: p._asset ? p.status : (reviewStatus[p.uuid] ?? p.status ?? 'review'),
+    notes: p._asset ? p.notes : [...(p.notes ?? []), ...(reviewNotes[p.uuid] ?? [])],
   })), [filtered, reviewNotes, reviewStatus])
 
-  const selected = enhancedPublishes.find(p => p.uuid === selectedId) ?? enhancedFiltered[0] ?? null
+  const selected = enhancedPublishes.find(p => p.uuid === selectedId) ?? null
   const activeProjects = projects?.length ? projects : index?.projects ?? []
 
   function updateReview(uuid, status, note) {
@@ -44,7 +71,8 @@ export default function App() {
     }
   }
 
-  const shellClass = `app-shell ${selected && surface === 'gallery' ? 'has-detail' : ''}`
+  // Asset selections show a full overlay — don't open the third-column detail panel
+  const shellClass = `app-shell ${selected && surface === 'gallery' && !selected._asset ? 'has-detail' : ''}`
 
   return (
     <div className={shellClass}>
@@ -90,6 +118,12 @@ export default function App() {
             <AssetBrowser />
           </Suspense>
         )}
+        {/* Asset detail overlay — shown when an asset card is clicked in the gallery */}
+        {selected?._asset && surface === 'gallery' && (
+          <Suspense fallback={null}>
+            <AssetDetail asset={selected._asset} onClose={() => setSelectedId(null)} />
+          </Suspense>
+        )}
         {!loading && surface === 'manager' && (
           <PipelineManager projects={activeProjects} publishes={enhancedPublishes} />
         )}
@@ -102,7 +136,7 @@ export default function App() {
           />
         )}
       </div>
-      {selected && surface === 'gallery' && (
+      {selected && surface === 'gallery' && !selected._asset && (
         <DetailPanel
           publish={selected}
           onClose={() => setSelectedId(null)}

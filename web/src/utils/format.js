@@ -33,11 +33,12 @@ export function formatMb(mb) {
 
 export function publishTypeColor(type) {
   return {
-    cache: 'oklch(72% 0.14 160)',
+    cache:    'oklch(72% 0.14 160)',
     flipbook: 'oklch(78% 0.13 84)',
-    render: 'oklch(70% 0.14 245)',
-    usd: 'oklch(72% 0.13 315)',
-    hip: 'oklch(72% 0.13 38)',
+    render:   'oklch(70% 0.14 245)',
+    usd:      'oklch(72% 0.13 315)',
+    hip:      'oklch(72% 0.13 38)',
+    asset:    'oklch(68% 0.14 290)',
   }[type] ?? 'oklch(68% 0.02 250)'
 }
 
