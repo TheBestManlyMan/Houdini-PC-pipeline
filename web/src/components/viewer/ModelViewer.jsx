@@ -243,6 +243,10 @@ export default function ModelViewer({ url, className = '' }) {
             ⟲
           </button>
         </div>
+
+        {clips.length > 0 && (
+          <div className="viewer-format-badge gltf">GLTF Animation</div>
+        )}
       </div>
 
       {clips.length > 0 && (

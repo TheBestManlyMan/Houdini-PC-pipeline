@@ -245,16 +245,38 @@ def _discover_assets(request: Request) -> list[dict]:
         rel_to_shows = asset_dir.relative_to(_shows_root)
         media_prefix = f"{base_url}/media/{rel_to_shows.as_posix()}"
 
-        glb_path = asset_dir / "asset.glb"
         thumb_path = asset_dir / "thumbnail.jpg"
+        format_type = meta.get("format_type") or (
+            "gltf_animated" if meta.get("animations") else "gltf_static"
+        )
 
         record = {
             **meta,
             "project": meta.get("project") or project,
             "asset_name": meta.get("asset_name") or asset_name,
-            "glb_url": f"{media_prefix}/asset.glb" if glb_path.exists() else None,
+            "format_type": format_type,
             "thumbnail_url": f"{media_prefix}/thumbnail.jpg" if thumb_path.exists() else None,
         }
+
+        if format_type in ("gltf_static", "gltf_animated"):
+            glb_path = asset_dir / "asset.glb"
+            record["glb_url"] = f"{media_prefix}/asset.glb" if glb_path.exists() else None
+
+        elif format_type == "vat":
+            mesh_path = asset_dir / "mesh.glb"
+            vat_bin_path = asset_dir / "vat_pos.bin"
+            vat_json_path = asset_dir / "vat.json"
+            record["mesh_url"] = f"{media_prefix}/mesh.glb" if mesh_path.exists() else None
+            record["vat_pos_url"] = f"{media_prefix}/vat_pos.bin" if vat_bin_path.exists() else None
+            record["vat_json_url"] = f"{media_prefix}/vat.json" if vat_json_path.exists() else None
+
+        elif format_type == "frame_sequence":
+            seq_json_path = asset_dir / "frame_sequence.json"
+            record["frame_sequence_url"] = (
+                f"{media_prefix}/frame_sequence.json" if seq_json_path.exists() else None
+            )
+            record["frame_url_template"] = f"{media_prefix}/frames/frame_{{frame}}.glb"
+
         results.append(record)
 
     return results
@@ -282,13 +304,40 @@ def get_asset(project: str, name: str, request: Request):
     base_url = str(request.base_url).rstrip("/")
     media_prefix = f"{base_url}/media/{rel_to_shows.as_posix()}"
 
-    return {
+    format_type = meta.get("format_type") or (
+        "gltf_animated" if meta.get("animations") else "gltf_static"
+    )
+    record = {
         **meta,
         "project": project,
         "asset_name": name,
-        "glb_url": f"{media_prefix}/asset.glb" if (asset_dir / "asset.glb").exists() else None,
-        "thumbnail_url": f"{media_prefix}/thumbnail.jpg" if (asset_dir / "thumbnail.jpg").exists() else None,
+        "format_type": format_type,
+        "thumbnail_url": (
+            f"{media_prefix}/thumbnail.jpg" if (asset_dir / "thumbnail.jpg").exists() else None
+        ),
     }
+    if format_type in ("gltf_static", "gltf_animated"):
+        record["glb_url"] = (
+            f"{media_prefix}/asset.glb" if (asset_dir / "asset.glb").exists() else None
+        )
+    elif format_type == "vat":
+        record["mesh_url"] = (
+            f"{media_prefix}/mesh.glb" if (asset_dir / "mesh.glb").exists() else None
+        )
+        record["vat_pos_url"] = (
+            f"{media_prefix}/vat_pos.bin" if (asset_dir / "vat_pos.bin").exists() else None
+        )
+        record["vat_json_url"] = (
+            f"{media_prefix}/vat.json" if (asset_dir / "vat.json").exists() else None
+        )
+    elif format_type == "frame_sequence":
+        record["frame_sequence_url"] = (
+            f"{media_prefix}/frame_sequence.json"
+            if (asset_dir / "frame_sequence.json").exists() else None
+        )
+        record["frame_url_template"] = f"{media_prefix}/frames/frame_{{frame}}.glb"
+
+    return record
 
 
 # ---------------------------------------------------------------------------

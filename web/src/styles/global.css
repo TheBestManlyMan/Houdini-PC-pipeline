@@ -822,6 +822,41 @@ button { color: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 
+/* ---- Viewer format badge (bottom-left overlay) ---- */
+.viewer-format-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.viewer-format-badge.gltf   { background: rgb(74 144 226 / .75); color: #fff; }
+.viewer-format-badge.vat    { background: rgb(78 170 100 / .80); color: #fff; }
+.viewer-format-badge.frame-seq { background: rgb(210 120 40 / .80); color: #fff; }
+
+/* ---- Asset format pill in info panel ---- */
+.asset-format-badge {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.asset-format-badge.gltf    { background: oklch(30% 0.06 230); color: #7abeff; }
+.asset-format-badge.vat     { background: oklch(28% 0.06 150); color: #7adda0; }
+.asset-format-badge.frame-seq { background: oklch(28% 0.07 55); color: #ffc07a; }
+
 /* ============================================================
    Asset Browser
    ============================================================ */

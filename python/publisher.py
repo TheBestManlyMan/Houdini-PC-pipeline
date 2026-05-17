@@ -1452,6 +1452,171 @@ def _export_glb_from_sop(sop_path: str, out_path: Path, frame_range: tuple, anim
 
 
 # ---------------------------------------------------------------------------
+# Topology detection + VAT / frame-sequence export helpers
+# ---------------------------------------------------------------------------
+
+def _detect_topology_change(sop_node, frame_start: int, frame_end: int) -> tuple:
+    """
+    Cook the SOP at frame_start and frame_end and compare point counts.
+    Returns (is_dynamic, pts_start, pts_end).
+    """
+    try:
+        import hou
+        geo_s = sop_node.geometryAtFrame(frame_start)
+        geo_e = sop_node.geometryAtFrame(frame_end)
+        pts_s = geo_s.intrinsicValue("pointcount") if geo_s else 0
+        pts_e = geo_e.intrinsicValue("pointcount") if geo_e else 0
+        return pts_s != pts_e, pts_s, pts_e
+    except Exception as exc:
+        logger.warning("Topology detection failed: %s", exc)
+        return False, 0, 0
+
+
+def _get_source_sop(gltf_rop_node):
+    """Return the SOP node that feeds a GLTF ROP, or None."""
+    try:
+        import hou
+    except ImportError:
+        return None
+    for pname in ("soppath", "sop", "inputnode"):
+        p = gltf_rop_node.parm(pname)
+        if p is not None:
+            path = p.evalAsString()
+            if path:
+                node = hou.node(path)
+                if node is not None:
+                    return node
+    return None
+
+
+def _export_vat(sop_node, out_dir: Path, frame_start: int, frame_end: int,
+                fps: int = 24, rop_node=None) -> dict:
+    """
+    Bake a Vertex Animation Texture set for a fixed-topology deforming sim.
+    Writes: mesh.glb, vat_pos.bin, vat.json
+    Returns the vat metadata dict.
+
+    Layout of vat_pos.bin: Float32 RGBA per vertex per frame.
+    Row = frame index (0..frame_count-1), col = vertex index (0..vertex_count-1).
+    Total floats = frame_count × vertex_count × 4.
+    """
+    import struct
+    import json as _json
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    vertex_count = None
+    all_floats: list[float] = []
+    bmin = [1e9, 1e9, 1e9]
+    bmax = [-1e9, -1e9, -1e9]
+
+    for f in range(frame_start, frame_end + 1):
+        geo = sop_node.geometryAtFrame(f)
+        pts = geo.intrinsicValue("pointcount")
+        if vertex_count is None:
+            vertex_count = pts
+        elif pts != vertex_count:
+            raise RuntimeError(
+                f"Topology changed at frame {f} ({pts} pts vs {vertex_count}). "
+                "Use Frame Sequence mode instead."
+            )
+
+        try:
+            pos_flat = geo.pointFloatAttribValues("P")
+        except Exception:
+            pos_flat = []
+            for pt in geo.points():
+                p = pt.position()
+                pos_flat.extend([float(p[0]), float(p[1]), float(p[2])])
+
+        for i in range(0, len(pos_flat), 3):
+            x, y, z = float(pos_flat[i]), float(pos_flat[i + 1]), float(pos_flat[i + 2])
+            all_floats.extend([x, y, z, 1.0])
+            if x < bmin[0]: bmin[0] = x
+            if y < bmin[1]: bmin[1] = y
+            if z < bmin[2]: bmin[2] = z
+            if x > bmax[0]: bmax[0] = x
+            if y > bmax[1]: bmax[1] = y
+            if z > bmax[2]: bmax[2] = z
+
+        logger.debug("VAT: baked frame %d (%d pts)", f, pts)
+
+    vertex_count = vertex_count or 0
+    frame_count = frame_end - frame_start + 1
+
+    bin_path = out_dir / "vat_pos.bin"
+    bin_path.write_bytes(struct.pack(f"<{len(all_floats)}f", *all_floats))
+    logger.info("VAT: %s (%.1f MB)", bin_path, bin_path.stat().st_size / 1e6)
+
+    # Rest-pose mesh at frame_start
+    mesh_path = out_dir / "mesh.glb"
+    try:
+        import hou
+        hou.setFrame(frame_start)
+    except Exception:
+        pass
+    if rop_node is not None:
+        _export_glb_from_rop(rop_node, mesh_path, (frame_start, frame_start), animated=False)
+    elif sop_node is not None:
+        _export_glb_from_sop(sop_node.path(), mesh_path, (frame_start, frame_start), animated=False)
+    else:
+        raise RuntimeError("VAT export needs a ROP or SOP node for the rest mesh.")
+
+    vat_meta = {
+        "vertex_count": vertex_count,
+        "frame_count": frame_count,
+        "fps": fps,
+        "frame_start": frame_start,
+        "frame_end": frame_end,
+        "bounds": {"min": bmin, "max": bmax},
+    }
+    (out_dir / "vat.json").write_text(_json.dumps(vat_meta, indent=2))
+    logger.info("VAT export complete: %d verts × %d frames", vertex_count, frame_count)
+    return vat_meta
+
+
+def _export_frame_sequence(out_dir: Path, frame_start: int, frame_end: int,
+                           rop_node=None, sop_path: str = None) -> dict:
+    """
+    Export one static GLB per frame for topology-changing simulations.
+    Writes: frames/frame_NNNN.glb, frame_sequence.json
+    Returns the frame_sequence metadata dict.
+    """
+    import json as _json
+
+    out_dir = Path(out_dir)
+    frames_dir = out_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_count = frame_end - frame_start + 1
+    logger.info("Frame sequence: exporting %d frames", frame_count)
+
+    for f in range(frame_start, frame_end + 1):
+        glb_path = frames_dir / f"frame_{f:04d}.glb"
+        try:
+            import hou
+            hou.setFrame(f)
+        except Exception:
+            pass
+        if rop_node is not None:
+            _export_glb_from_rop(rop_node, glb_path, (f, f), animated=False)
+        elif sop_path:
+            _export_glb_from_sop(sop_path, glb_path, (f, f), animated=False)
+        else:
+            raise RuntimeError("Frame sequence export needs a ROP or SOP path.")
+        logger.debug("Frame sequence: frame %d done", f)
+
+    seq_meta = {
+        "frame_start": frame_start,
+        "frame_end": frame_end,
+        "frame_count": frame_count,
+    }
+    (out_dir / "frame_sequence.json").write_text(_json.dumps(seq_meta, indent=2))
+    return seq_meta
+
+
+# ---------------------------------------------------------------------------
 # _GlbRopRow  (mirrors _RopRow for GLTF ROPs)
 # ---------------------------------------------------------------------------
 
@@ -1489,6 +1654,17 @@ class _GlbRopRow(QWidget):
         self._frame_end.setValue(f2)
         self._frame_end.setFixedWidth(64)
 
+        self._export_mode = QComboBox()
+        self._export_mode.addItems(["Auto-detect", "GLTF", "VAT (fixed topo)", "Frame Sequence"])
+        self._export_mode.setFixedWidth(150)
+        self._export_mode.setVisible(False)
+        self._export_mode.setToolTip(
+            "Auto-detect: checks point count — routes to GLTF or Frame Sequence.\n"
+            "VAT: bakes positions into a texture (fixed topology only).\n"
+            "Frame Sequence: exports one GLB per frame (works for any topology)."
+        )
+        self._anim_check.toggled.connect(self._export_mode.setVisible)
+
         layout.addWidget(self._check)
         layout.addWidget(tag)
         layout.addWidget(self._anim_check)
@@ -1496,6 +1672,7 @@ class _GlbRopRow(QWidget):
         layout.addWidget(self._frame_start)
         layout.addWidget(QLabel("–"))
         layout.addWidget(self._frame_end)
+        layout.addWidget(self._export_mode)
         layout.addStretch()
 
     def is_checked(self) -> bool:
@@ -1506,6 +1683,10 @@ class _GlbRopRow(QWidget):
 
     def frame_range(self) -> tuple:
         return (self._frame_start.value(), self._frame_end.value())
+
+    def export_mode(self) -> str:
+        """Returns 'auto', 'gltf', 'vat', or 'frames'."""
+        return ["auto", "gltf", "vat", "frames"][self._export_mode.currentIndex()]
 
     @property
     def node(self):
@@ -1556,7 +1737,9 @@ class _GlbTab(QWidget):
         target_layout.addLayout(name_row)
 
         tip = QLabel(
-            "Publishes to: {shows_root}/assets/{project}/{asset_name}/asset.glb"
+            "Publishes to: {shows_root}/assets/{project}/{asset_name}/\n"
+            "  GLTF → asset.glb   |   VAT → mesh.glb + vat_pos.bin + vat.json\n"
+            "  Frame Seq → frames/frame_NNNN.glb"
         )
         tip.setStyleSheet("color: #888; font-size: 10px;")
         target_layout.addWidget(tip)
@@ -1749,37 +1932,98 @@ class _GlbTab(QWidget):
 
     def _do_publish(self, asset_name: str, project_folder: str, dest_dir: Path):
         import datetime
-        import json
+        import json as _json
 
-        ctx = self._ctx
         rop_mode = self._rop_mode_check.isChecked()
         checked_rows = [r for r in self._rop_rows if r.is_checked()]
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        glb_path = dest_dir / "asset.glb"
+
+        animated = False
+        frame_range = (1, 1)
+        format_type = "gltf_static"
+        vat_meta = None
+        seq_meta = None
 
         if rop_mode:
             if not checked_rows:
                 raise RuntimeError("No GLTF ROP selected.")
-            row = checked_rows[0]  # publish the first checked ROP
+            row = checked_rows[0]
             animated = row.is_animated()
             frame_range = row.frame_range()
-            self._set_status(f"Exporting GLB via {row.node.name()}…", "#8cf")
-            _export_glb_from_rop(row.node, glb_path, frame_range, animated)
+            mode = row.export_mode() if animated else "gltf"
+
+            if animated:
+                if mode == "auto":
+                    self._set_status("Detecting topology change…", "#8cf")
+                    sop = _get_source_sop(row.node)
+                    if sop is not None:
+                        is_dyn, pts_s, pts_e = _detect_topology_change(
+                            sop, frame_range[0], frame_range[1]
+                        )
+                        if is_dyn:
+                            mode = "frames"
+                            self._set_status(
+                                f"Topology dynamic ({pts_s}→{pts_e} pts) → Frame Sequence", "#fa4"
+                            )
+                        else:
+                            mode = "gltf"
+                            self._set_status(f"Topology stable ({pts_s} pts) → GLTF", "#8cf")
+                    else:
+                        mode = "gltf"
+
+                if mode == "vat":
+                    sop = _get_source_sop(row.node)
+                    if sop is None:
+                        raise RuntimeError(
+                            "Cannot find source SOP for VAT bake.\n"
+                            "Set the soppath parm on your GLTF ROP, or use Manual SOP mode."
+                        )
+                    self._set_status(
+                        f"Baking VAT ({frame_range[0]}–{frame_range[1]})…", "#8cf"
+                    )
+                    vat_meta = _export_vat(
+                        sop, dest_dir,
+                        frame_range[0], frame_range[1],
+                        fps=24, rop_node=row.node,
+                    )
+                    format_type = "vat"
+
+                elif mode == "frames":
+                    self._set_status(
+                        f"Exporting frame sequence ({frame_range[0]}–{frame_range[1]})…", "#8cf"
+                    )
+                    seq_meta = _export_frame_sequence(
+                        dest_dir, frame_range[0], frame_range[1],
+                        rop_node=row.node,
+                    )
+                    format_type = "frame_sequence"
+
+                else:
+                    glb_path = dest_dir / "asset.glb"
+                    self._set_status(f"Exporting GLB via {row.node.name()}…", "#8cf")
+                    _export_glb_from_rop(row.node, glb_path, frame_range, animated=True)
+                    format_type = "gltf_animated"
+
+            else:
+                glb_path = dest_dir / "asset.glb"
+                self._set_status(f"Exporting GLB via {row.node.name()}…", "#8cf")
+                _export_glb_from_rop(row.node, glb_path, frame_range, animated=False)
+                format_type = "gltf_static"
+
         else:
             sop_path = self._sop_path_edit.text().strip()
             if not sop_path:
                 raise RuntimeError("No SOP path provided.")
-            animated = False
-            frame_range = (1, 1)
+            glb_path = dest_dir / "asset.glb"
             self._set_status(f"Exporting GLB from {sop_path}…", "#8cf")
-            _export_glb_from_sop(sop_path, glb_path, frame_range, animated)
+            _export_glb_from_sop(sop_path, glb_path, (1, 1), animated=False)
+            format_type = "gltf_static"
 
         if self._thumb_check.isChecked():
             self._set_status("Capturing thumbnail…", "#8cf")
             _capture_viewport_thumbnail(dest_dir / "thumbnail.jpg")
 
-        # Metadata
         try:
             import hou
             houdini_version = hou.applicationVersionString()
@@ -1792,21 +2036,27 @@ class _GlbTab(QWidget):
             "author": os.getenv("USER", "artist"),
             "created": datetime.datetime.utcnow().isoformat() + "Z",
             "houdini_version": houdini_version,
+            "format_type": format_type,
             "frame_range": list(frame_range),
             "tags": tags,
-            "animations": ["Main"] if animated else [],
+            "animations": ["Main"] if format_type == "gltf_animated" else [],
             "polycount": 0,
             "project": project_folder,
             "asset_name": asset_name,
             "description": self._desc_edit.toPlainText().strip(),
             "source_node": checked_rows[0].node.path() if rop_mode and checked_rows else "",
         }
+        if vat_meta is not None:
+            meta["vat"] = vat_meta
+        if seq_meta is not None:
+            meta["frame_sequence"] = seq_meta
+
         (dest_dir / "metadata.json").write_text(
-            json.dumps(meta, indent=2), encoding="utf-8"
+            _json.dumps(meta, indent=2), encoding="utf-8"
         )
 
-        self._set_status(f"Published → {dest_dir}", "#4e4")
-        logger.info("GLB published: %s", dest_dir)
+        self._set_status(f"Published {format_type} → {dest_dir}", "#4e4")
+        logger.info("GLB published: %s (%s)", dest_dir, format_type)
 
 
 # ---------------------------------------------------------------------------
