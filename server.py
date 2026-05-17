@@ -328,10 +328,37 @@ def list_hip_files(folder: str, seq: str, shot: str):
     result = []
     for hip in hips:
         parsed = pipeline.parse_hip_filename(hip.name)
+        stat = hip.stat() if hip.exists() else None
         result.append({
             "name": hip.name,
             "path": str(hip),
-            "size_mb": round(hip.stat().st_size / (1024 * 1024), 2) if hip.exists() else 0,
+            "size": stat.st_size if stat else 0,
+            "size_mb": round(stat.st_size / (1024 * 1024), 2) if stat else 0,
+            "modified_ts": stat.st_mtime if stat else 0,
+            "task": parsed["task"] if parsed else "",
+            "version": parsed["version"] if parsed else 0,
+            "version_str": parsed["version_str"] if parsed else "",
+        })
+    return result
+
+
+@_r_assets.get("/projects/{folder}/assets/{asset_type}/{asset}/hips")
+def list_asset_hip_files(folder: str, asset_type: str, asset: str):
+    folder = _validate_id(folder, "Project folder")
+    asset_type = _validate_id(asset_type, "Asset type")
+    asset = _validate_id(asset, "Asset name")
+    work_dir = pipeline.asset_work_houdini(folder, asset_type, asset)
+    hips = pipeline.find_hip_files(work_dir)
+    result = []
+    for hip in hips:
+        parsed = pipeline.parse_hip_filename(hip.name)
+        stat = hip.stat() if hip.exists() else None
+        result.append({
+            "name": hip.name,
+            "path": str(hip),
+            "size": stat.st_size if stat else 0,
+            "size_mb": round(stat.st_size / (1024 * 1024), 2) if stat else 0,
+            "modified_ts": stat.st_mtime if stat else 0,
             "task": parsed["task"] if parsed else "",
             "version": parsed["version"] if parsed else 0,
             "version_str": parsed["version_str"] if parsed else "",
