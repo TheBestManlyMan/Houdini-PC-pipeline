@@ -130,8 +130,6 @@ from .indexer import (
     detect_stale_dependencies,
 )
 
-# Asset database
-from .database import AssetDatabase, DEFAULT_DB
 
 __all__ = [
     # config
@@ -170,6 +168,5 @@ __all__ = [
     "build_project_index", "write_project_index", "read_project_index",
     "scan_all_projects", "rebuild",
     "get_publish_dependencies", "get_downstream_dependents", "detect_stale_dependencies",
-    # database
-    "AssetDatabase", "DEFAULT_DB",
+
 ]
