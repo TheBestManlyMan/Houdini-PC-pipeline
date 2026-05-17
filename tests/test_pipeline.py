@@ -427,3 +427,42 @@ def test_build_project_index_with_metadata(temp_env, tmp_path):
     idx = pipeline.build_project_index("scan-test")
     assert idx["publish_count"] == 1
     assert idx["publishes"][0]["entity"] == "SQ010_0010"
+
+
+def test_rebuild_writes_root_index(temp_env):
+    import json
+    import pipeline
+    import pipeline.config
+    root = pipeline.config._CONFIG_PATH.parent / "shows"
+    root.mkdir(exist_ok=True)
+    pipeline.add_project("Rebuild Test", "rb-test")
+
+    pub_dir = (root / "rb-test" / "SQ020" / "0010" / "FX" /
+               "publish" / "flipbook" / "sim" / "flipbook" / "v001")
+    pub_dir.mkdir(parents=True)
+    # Place a fake jpg so _relativize_paths auto-detects it
+    (pub_dir / "dummy.jpg").write_text("x")
+    meta = pipeline.build_metadata(
+        project="Rebuild Test",
+        context={"type": "shot", "sequence": "SQ020", "shot": "0010"},
+        entity="SQ020_0010",
+        task="sim",
+        publish_type="flipbook",
+        version=1,
+    )
+    pipeline.write_metadata(pub_dir, meta)
+
+    index_path = pipeline.rebuild()
+    assert index_path.exists()
+
+    with open(index_path) as f:
+        data = json.load(f)
+
+    assert data["publish_count"] == 1
+    pub = data["publishes"][0]
+    assert pub["entity"] == "SQ020_0010"
+    # _index_path must be relative to projects_root
+    assert not pub["_index_path"].startswith("/")
+    # thumbnail auto-detected and relativized
+    assert pub["outputs"]["thumbnail"].endswith("dummy.jpg")
+    assert not pub["outputs"]["thumbnail"].startswith("/")

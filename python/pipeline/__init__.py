@@ -124,6 +124,7 @@ from .indexer import (
     write_project_index,
     read_project_index,
     scan_all_projects,
+    rebuild,
     get_publish_dependencies,
     get_downstream_dependents,
     detect_stale_dependencies,
@@ -167,7 +168,7 @@ __all__ = [
     "validate_publish_folder",
     # indexer
     "build_project_index", "write_project_index", "read_project_index",
-    "scan_all_projects",
+    "scan_all_projects", "rebuild",
     "get_publish_dependencies", "get_downstream_dependents", "detect_stale_dependencies",
     # database
     "AssetDatabase", "DEFAULT_DB",

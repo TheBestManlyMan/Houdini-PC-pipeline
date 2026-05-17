@@ -376,6 +376,88 @@ def detect_stale_dependencies(publish_uuid: str, project_folder: str) -> list[di
 
 
 # ---------------------------------------------------------------------------
+# Global index (index.json at projects_root)
+# ---------------------------------------------------------------------------
+
+_ROOT_INDEX_FILENAME = "index.json"
+
+
+def rebuild() -> Path:
+    """
+    Aggregate every project's publishes into {projects_root}/index.json.
+
+    Paths in the output are relative to projects_root so the file works when
+    served from Netlify/Cloudflare Pages or python -m http.server without a
+    backend.  Returns the path of the written index.
+    """
+    root = projects_root()
+    all_publishes: list[dict] = []
+
+    for project in load_projects():
+        folder = project.get("folder", "")
+        if not folder:
+            continue
+        try:
+            project_data = build_project_index(folder)
+            for record in project_data.get("publishes", []):
+                all_publishes.append(_relativize_paths(record, root))
+        except Exception as exc:
+            logger.warning("Skipping project %s during rebuild: %s", folder, exc)
+
+    index = {
+        "generated_at": _utc_now(),
+        "publish_count": len(all_publishes),
+        "publishes": all_publishes,
+    }
+    index_path = root / _ROOT_INDEX_FILENAME
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2, default=str)
+
+    logger.info("Global index written: %s  (%d publishes)", index_path, len(all_publishes))
+    return index_path
+
+
+def _relativize_paths(record: dict, root: Path) -> dict:
+    """Return a copy of record with absolute paths made relative to root.
+    Also auto-detects thumbnail and mp4 from the publish directory when the
+    metadata omitted them (legacy publisher.py behaviour).
+    """
+    record = dict(record)
+
+    abs_path_str = record.get("_index_path", "")
+    abs_path = Path(abs_path_str) if abs_path_str else None
+
+    if abs_path:
+        try:
+            record["_index_path"] = str(abs_path.relative_to(root))
+        except ValueError:
+            pass
+
+    outputs = dict(record.get("outputs") or {})
+
+    if abs_path and abs_path.is_dir():
+        if not outputs.get("thumbnail"):
+            jpgs = sorted(abs_path.glob("*.jpg"))
+            if jpgs:
+                outputs["thumbnail"] = str(jpgs[0])
+        if not outputs.get("mp4"):
+            mp4s = list(abs_path.glob("*.mp4"))
+            if mp4s:
+                outputs["mp4"] = str(mp4s[0])
+
+    for key in ("thumbnail", "mp4"):
+        val = outputs.get(key, "")
+        if val:
+            try:
+                outputs[key] = str(Path(val).relative_to(root))
+            except ValueError:
+                pass
+
+    record["outputs"] = outputs
+    return record
+
+
+# ---------------------------------------------------------------------------
 # Private
 # ---------------------------------------------------------------------------
 
