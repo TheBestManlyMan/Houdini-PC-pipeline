@@ -17,7 +17,6 @@ export default function Sidebar({ projects, publishes, activeProject, activeSurf
           ['gallery', 'Gallery'],
           ['assets', '3D Assets'],
           ['manager', 'Manager'],
-          ['mobile', 'Mobile Review'],
         ].map(([id, label]) => (
           <button
             key={id}

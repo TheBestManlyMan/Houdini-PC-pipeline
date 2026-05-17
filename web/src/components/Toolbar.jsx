@@ -7,8 +7,7 @@ export default function Toolbar({ surface, onSurface, viewMode, onViewMode, filt
         <strong>
           {surface === 'gallery' ? 'Publish Gallery'
             : surface === 'assets'  ? '3D Assets'
-            : surface === 'manager' ? 'Pipeline Manager'
-            : 'Mobile Review'}
+            : 'Pipeline Manager'}
         </strong>
         <span className={`conn conn-${mode}`}><i />{mode === 'live' ? 'Live' : mode === 'static' ? 'Static index' : 'Demo'}</span>
       </div>
@@ -54,9 +53,6 @@ export default function Toolbar({ surface, onSurface, viewMode, onViewMode, filt
         ))}
       </div>}
       <button className="toolbar-btn" onClick={onRefresh} title="Refresh index">↺</button>
-      <button className="toolbar-btn ghost" onClick={() => onSurface(surface === 'mobile' ? 'gallery' : 'mobile')}>
-        {surface === 'mobile' ? 'Desktop' : 'Phone'}
-      </button>
       <span className="toolbar-source" title={source}>{source}</span>
     </div>
   )
