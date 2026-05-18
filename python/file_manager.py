@@ -14,9 +14,9 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QLabel, QComboBox, QPushButton, QDialog,
         QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox,
-        QScrollArea, QFrame, QSizePolicy, QGridLayout, QSpacerItem,
+        QScrollArea, QFrame, QSizePolicy, QGridLayout,
     )
-    from PySide6.QtCore import Qt, QUrl, QSize, QRect, QEvent, Signal, QTimer
+    from PySide6.QtCore import Qt, QUrl, QRect, QEvent, Signal
     from PySide6.QtGui import (
         QFont, QFontDatabase, QKeySequence, QDesktopServices, QShortcut,
         QPainter, QPainterPath, QColor, QLinearGradient, QRadialGradient,
@@ -46,9 +46,7 @@ C_TEXT3   = "#7e8389"
 C_TEXT4   = "#5a5f64"
 C_ACCENT  = "#ff7a1a"
 C_ACCENT2 = "#ffae6e"
-C_PUB     = "#4ea7ff"
 C_OK      = "#6dd58c"
-C_WARN    = "#ffd166"
 
 DENSITY_MIN_W = {"comfy": 240, "regular": 200, "compact": 168}
 DENSITY_THUMB_H = {"comfy": 135, "regular": 113, "compact": 95}
@@ -242,15 +240,13 @@ class _ThumbnailWidget(QWidget):
     reveal_clicked = Signal()
     card_clicked   = Signal()
 
-    def __init__(self, ph: int, ver: str, dur: str = "",
-                 is_latest: bool = False, is_pub: bool = False, dim: float = 1.0,
+    def __init__(self, ph: int, ver: str,
+                 is_latest: bool = False, dim: float = 1.0,
                  thumb_h: int = 113, parent=None):
         super().__init__(parent)
         self._ph = ph
         self._ver = ver
-        self._dur = dur
         self._is_latest = is_latest
-        self._is_pub = is_pub
         self._dim = dim
         self._hovered = False
         self.setFixedHeight(thumb_h)
@@ -320,13 +316,9 @@ class _ThumbnailWidget(QWidget):
             p.drawText(x + 7, y + bh - 5, text)
             return bw_
 
-        # Badges top-left
-        x = margin
+        # Badge top-left — LATEST only (publish status is not tracked for hip files)
         if self._is_latest:
-            bw_ = draw_badge(x, margin, "LATEST", QColor(C_ACCENT), QColor("white"))
-            x += bw_ + 5
-        if self._is_pub:
-            draw_badge(x, margin, "PUBLISHED", QColor(C_PUB), QColor("white"))
+            draw_badge(margin, margin, "LATEST", QColor(C_ACCENT), QColor("white"))
 
         # Version text bottom-left (mono bold)
         mf = QFont("JetBrains Mono" if QFontDatabase.hasFamily("JetBrains Mono") else "Courier New")
@@ -335,23 +327,6 @@ class _ThumbnailWidget(QWidget):
         p.setFont(mf)
         p.setPen(QColor("white"))
         p.drawText(margin, h - margin - 2, self._ver)
-
-        # Duration bottom-right
-        if self._dur:
-            mf2 = QFont(mf)
-            mf2.setPixelSize(10)
-            mf2.setBold(False)
-            p.setFont(mf2)
-            fm2 = p.fontMetrics()
-            tw = fm2.horizontalAdvance(self._dur)
-            bw_ = tw + 12
-            bx = w - margin - bw_
-            by = h - margin - bh
-            path = QPainterPath()
-            path.addRoundedRect(bx, by, bw_, bh, 3, 3)
-            p.fillPath(path, QColor(0, 0, 0, 140))
-            p.setPen(QColor("white"))
-            p.drawText(bx + 6, by + bh - 4, self._dur)
 
         # Hover: play icon + action buttons
         if self._hovered:
@@ -367,9 +342,8 @@ class _ThumbnailWidget(QWidget):
             play.closeSubpath()
             p.fillPath(play, QColor("white"))
 
-            # Action buttons
+            # Action buttons: Open, Copy, Reveal
             symbols = ["▶", "⎘", "⎓"]
-            tooltips_text = ["O", "C", "R"]
             for i, (rect, sym) in enumerate(zip(self._btn_rects(), symbols)):
                 p.setBrush(QColor(0, 0, 0, 160))
                 p.setPen(QPen(QColor(255, 255, 255, 25)))
@@ -430,8 +404,8 @@ class _HipCard(QFrame):
         dim = 1.0 if n <= 1 or self._is_latest else 0.70 + (idx / max(1, n - 1)) * 0.22
 
         thumb_h = DENSITY_THUMB_H.get(density, 113)
-        self._thumb = _ThumbnailWidget(ph=ph, ver=ver, is_latest=self._is_latest, dim=dim,
-                                       thumb_h=thumb_h)
+        self._thumb = _ThumbnailWidget(ph=ph, ver=ver, is_latest=self._is_latest,
+                                       dim=dim, thumb_h=thumb_h)
         self._thumb.card_clicked.connect(lambda: self.selected_changed.emit(self))
         self._thumb.open_clicked.connect(lambda: self.open_requested.emit(str(self._hip_path)))
         self._thumb.copy_clicked.connect(lambda: self.copy_requested.emit(str(self._hip_path)))
