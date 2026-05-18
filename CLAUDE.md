@@ -4,25 +4,67 @@
 
 A personal Houdini FX pipeline for managing projects, versioning hip files, writing caches, and publishing outputs. No ShotGrid, no render farm — disk + JSON only.
 
+## Architecture
+
+The filesystem IS the database.  Three one-way arrows, no server:
+
+```
+publisher.py  →  writes deliverable + metadata.json to disk
+                 calls pipeline.rebuild() at the end of every publish
+indexer.py    →  walks projects_root, collects all metadata.json files,
+                 writes a single index.json at projects_root
+gallery.html  →  fetch("./index.json"), renders cards,
+                 loads MP4s and thumbnails via relative paths
+```
+
+Sharing with clients: drag the projects root onto Netlify Drop and paste the URL.  No backend ever.
+
 ## Repo structure
 
 ```
 Houdini-PC-pipeline/
+  gallery.html               # Publish gallery — open via gallery_launch.py
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
   CLAUDE.md                  # This file
   python/
-    pipeline.py              # Core utility — ALL shared logic lives here
+    pipeline/                # Core package — ALL shared logic lives here
+      __init__.py            # Re-exports all public symbols
+      config.py              # Load pipeline_config.json
+      entities.py            # Project and entity registry
+      paths.py               # Path builders (shot + asset contexts)
+      versioning.py          # get_next_version, version_str
+      publish.py             # Hip, publish, preview path helpers
+      cache.py               # Cache filenames + directory creation
+      ffmpeg.py              # encode_mp4, encode_mp4_from_exr
+      flipbook.py            # flipbook_viewport
+      metadata.py            # build_metadata, write_metadata, read_metadata
+      validation.py          # validate_* functions
+      indexer.py             # Scan publishes → index.json (rebuild())
+      naming_conventions.py  # Naming pattern helpers (standalone shim)
     file_manager.py          # PySide6 File Manager dialog
+    publisher.py             # PySide6 Publisher dialog
+    naming_conventions.py    # Naming helpers (used by publisher.py)
   houdini/
     tool_scripts/            # Shelf tool button scripts
+      file_manager_launch.py
+      gallery_launch.py      # Starts http.server + opens gallery.html
+      publisher_launch.py
   docs/
-    pipeline_api.md          # pipeline.py function reference
+    pipeline_api.md          # pipeline package function reference
   tests/
-    test_pipeline.py         # Unit tests for pipeline.py
+    test_pipeline.py         # Unit tests for pipeline package
   .gitignore
 ```
+
+## Opening each tool
+
+| Tool | How to open |
+|------|-------------|
+| File Manager | Run `file_manager_launch.py` shelf button in Houdini |
+| Publisher | Run `publisher_launch.py` shelf button in Houdini |
+| Gallery | Run `gallery_launch.py` shelf button — opens http://127.0.0.1:8000/gallery.html |
 
 ## Workflow — collaborating with Claude
 
@@ -69,11 +111,11 @@ Houdini-PC-pipeline/
 
 ## Rules — read before writing any code
 
-1. **Check `python/pipeline.py` first.** If a function exists for the task, use it. Never duplicate logic. Never build paths inline in other scripts.
+1. **Check `python/pipeline/` first.** If a function exists for the task, use it. Never duplicate logic. Never build paths inline in other scripts.
 
-2. **`pipeline.py` owns all logic.** UI files (file_manager.py, future tools) are thin — they call pipeline.py functions and display results. No path building or versioning logic in UI files.
+2. **The `pipeline` package owns all logic.** UI files (file_manager.py, publisher.py, future tools) are thin — they call pipeline functions and display results. No path building or versioning logic in UI files.
 
-3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. `pipeline.py` loads config relative to its own location — no absolute paths in code.
+3. **No hardcoded paths.** Always load `projects_root` from `pipeline_config.json`. The package loads config relative to its own location — no absolute paths in code.
 
 4. **Both contexts always.** Every function touching paths must handle:
    - Shot: `{projects_root}/{project}/{SEQ}/{SHOT}/`
@@ -87,9 +129,11 @@ Houdini-PC-pipeline/
 
 8. **Full file replacement** when more than ~2 spots change in a script.
 
-9. **After editing pipeline.py** — check if `tests/test_pipeline.py` needs updating.
+9. **After editing the pipeline package** — check if `tests/test_pipeline.py` needs updating.
 
 10. **After meaningful API changes** — update `docs/pipeline_api.md`.
+
+11. **No new web gallery surfaces.** The gallery is a single static `gallery.html` that reads `index.json`.  Do not introduce server endpoints, React build steps, or additional HTML files for the gallery.
 
 ## Naming conventions
 

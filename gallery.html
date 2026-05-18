@@ -196,10 +196,6 @@ input,select{font-family:inherit}
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-<script>
-window.PUBLISHES = [{"id": 1, "project": "Reel", "entity_type": "shot", "context": "SNOW/Siimulation", "pub_type": "flipbook", "entity": "SNOW_Siimulation", "task": "snowman", "publish_name": "flipbook", "fmt": "flipbook", "version": 1, "published_by": "maxborg", "published_at": "2026-05-14T23:57:08.111863", "description": "snowman with shader and carrot", "frame_start": 1, "frame_end": 64, "thumbnail": "file:///home/maxborg/projects/shows/reel/SNOW/Siimulation/FX/preview/snowman/flipbook/v001/SNOW_Siimulation_fx_snowman_flipbook_v001.0001.jpg", "mp4": "file:///home/maxborg/projects/shows/reel/SNOW/Siimulation/FX/preview/snowman/flipbook/v001/SNOW_Siimulation_fx_snowman_flipbook_v001.mp4", "status": "wip", "size_mb": 2, "path": "/home/maxborg/projects/shows/reel/SNOW/Siimulation/FX/preview/snowman/flipbook/v001"}, {"id": 2, "project": "Reel", "entity_type": "shot", "context": "SNOW/Snowman", "pub_type": "flipbook", "entity": "SNOW_Snowman", "task": "sim", "publish_name": "flipbook", "fmt": "flipbook", "version": 1, "published_by": "maxborg", "published_at": "2026-05-12T23:51:50.478071", "description": "Firtst Version", "frame_start": 1, "frame_end": 64, "thumbnail": "file:///home/maxborg/projects/shows/reel/SNOW/Snowman/preview/sim/flipbook/v001/SNOW_Snowman_fx_sim_flipbook_v001.0001.jpg", "mp4": "file:///home/maxborg/projects/shows/reel/SNOW/Snowman/preview/sim/flipbook/v001/SNOW_Snowman_fx_sim_flipbook_v001.mp4", "status": "wip", "size_mb": 9, "path": "/home/maxborg/projects/shows/reel/SNOW/Snowman/preview/sim/flipbook/v001"}];
-window.GEN_TIME  = "2026-05-14T23:57:13.237405";
-</script>
 <script type="text/babel">
 const __TWEAKS_STYLE = `
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
@@ -1009,6 +1005,38 @@ const Topbar = ({ filters, setFilters, view, setView, sort, setSort, count, tota
   );
 };
 
+// Map indexer v2 schema → gallery display fields.
+function normalizePub(p) {
+  const ctx = p.context || {};
+  let ctxStr = '';
+  if (ctx.type === 'shot') ctxStr = [ctx.sequence, ctx.shot].filter(Boolean).join('/');
+  else ctxStr = [ctx.asset_type, ctx.asset].filter(Boolean).join('/');
+  const outputs = p.outputs || {};
+  const stats = p.stats || {};
+  return {
+    id: p.uuid || p._index_path,
+    project: p.project || '',
+    entity_type: ctx.type || 'unknown',
+    context: ctxStr,
+    pub_type: p.publish_type || '',
+    entity: p.entity || '',
+    task: p.task || '',
+    publish_name: p.task || '',
+    fmt: p.publish_type || '',
+    version: p.version || 0,
+    published_by: p.created_by || '',
+    published_at: p.created_at || '',
+    description: Array.isArray(p.notes) ? (p.notes[0] || '') : (p.description || ''),
+    frame_start: stats.frame_start != null ? stats.frame_start : null,
+    frame_end:   stats.frame_end   != null ? stats.frame_end   : null,
+    thumbnail: outputs.thumbnail || '',
+    mp4: outputs.mp4 || '',
+    status: p.status || 'wip',
+    size_mb: stats.disk_mb != null ? stats.disk_mb : null,
+    path: p._index_path || '',
+  };
+}
+
 const TWEAK_DEFAULTS = { view:'grid', density:'comfortable', accent:'#e6a455', showSidebar:true };
 
 function App() {
@@ -1018,12 +1046,38 @@ function App() {
   const [view, setView] = useState(tweaks.view);
   const [sort, setSort] = useState('date-desc');
   const [selected, setSelected] = useState(null);
+  const [PUBS, setPUBS] = useState([]);
+  const [genTime, setGenTime] = useState(null);
+  const [loadState, setLoadState] = useState('loading');
+
+  useEffect(() => {
+    fetch('./index.json')
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => {
+        setPUBS((data.publishes || []).map(normalizePub));
+        setGenTime(data.generated_at || null);
+        setLoadState('ok');
+      })
+      .catch(() => setLoadState('error'));
+  }, []);
 
   useEffect(() => setView(tweaks.view), [tweaks.view]);
   useEffect(() => { document.documentElement.style.setProperty('--accent', tweaks.accent); }, [tweaks.accent]);
   useEffect(() => { document.documentElement.dataset.density = tweaks.density; }, [tweaks.density]);
 
-  const PUBS = window.PUBLISHES;
+  if (loadState === 'loading') return (
+    <div className="app" style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}>
+      <div className="empty"><div className="empty-title">Loading index.json…</div></div>
+    </div>
+  );
+  if (loadState === 'error') return (
+    <div className="app" style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}>
+      <div className="empty">
+        <div className="empty-title">No index.json found</div>
+        <div className="empty-sub">Run the publisher, or open this page via<br/><code style={{fontFamily:'var(--mono)',fontSize:'11px'}}>python -m http.server</code><br/>from the projects root.</div>
+      </div>
+    </div>
+  );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -1076,7 +1130,7 @@ function App() {
               sort={sort} setSort={setSort}
               count={filtered.length} total={PUBS.length}
               search={search} setSearch={setSearch}
-              genTime={window.GEN_TIME}/>
+              genTime={genTime}/>
 
       <div className="main" data-sidebar={tweaks.showSidebar?'on':'off'} data-detail={selected?'on':'off'}>
         {tweaks.showSidebar && <Sidebar pubs={PUBS} filters={filters} setFilters={setFilters}/>}

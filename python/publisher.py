@@ -697,6 +697,11 @@ class _AssetTab(QWidget):
             }
             pipeline.write_publish_metadata(pub_dir, metadata)
 
+        try:
+            pipeline.rebuild()
+        except Exception as _e:
+            logger.warning("Index rebuild failed (publish succeeded): %s", _e)
+
         self._set_status(
             f"Published v{version:03d} — {len(published_paths)} ROP(s) done.", "#4e4"
         )
@@ -937,6 +942,11 @@ class _FlipbookTab(QWidget):
             "frame_start": start,
             "frame_end": end,
         })
+
+        try:
+            pipeline.rebuild()
+        except Exception as _e:
+            logger.warning("Index rebuild failed (publish succeeded): %s", _e)
 
         self._set_status(f"Flipbook v{ver:03d} published.", "#4e4")
 
@@ -1284,6 +1294,11 @@ class _RenderTab(QWidget):
                 "frame_end": entry["frame_end"],
                 "preview_mp4": str(mp4_path) if mp4_path else None,
             })
+
+        try:
+            pipeline.rebuild()
+        except Exception as _e:
+            logger.warning("Index rebuild failed (publish succeeded): %s", _e)
 
         self._set_status(
             f"Rendered v{ver:03d} — {len(entries)} ROP(s) done.", "#4e4"
