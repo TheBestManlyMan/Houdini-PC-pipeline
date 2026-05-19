@@ -2,11 +2,11 @@
 
 ## What this is
 
-A personal Houdini FX pipeline for managing projects, versioning hip files, writing caches, and publishing outputs. No ShotGrid, no render farm — disk + JSON only.
+A personal Houdini FX pipeline for managing projects, versioning hip files, writing caches, publishing outputs, and offloading renders/sims to a Deadline render farm. No ShotGrid — disk + JSON for project state, Deadline for compute offload.
 
 ## Architecture
 
-The filesystem IS the database.  Three one-way arrows, no server:
+The filesystem IS the project database.  Pipeline tools never run a server; Deadline handles compute scheduling only.
 
 ```
 publisher.py  →  writes deliverable + metadata.json to disk
@@ -15,7 +15,12 @@ indexer.py    →  walks projects_root, collects all metadata.json files,
                  writes a single index.json at projects_root
 gallery.html  →  fetch("./index.json"), renders cards,
                  loads MP4s and thumbnails via relative paths
+Deadline      →  reads HIPs from work/houdini/, runs ROPs/TOPs on workers,
+                 writes outputs to publish/render/ or publish/cache/
+                 (single workstation now; ready for Linux render nodes later)
 ```
+
+Deadline never writes project metadata. Renders land on disk; `publisher.py` (or `indexer.rebuild()`) picks them up the next time it runs — the "disk + JSON" contract is preserved.
 
 Sharing with clients: drag the projects root onto Netlify Drop and paste the URL.  No backend ever.
 
@@ -23,7 +28,6 @@ Sharing with clients: drag the projects root onto Netlify Drop and paste the URL
 
 ```
 Houdini-PC-pipeline/
-  gallery.html               # Publish gallery — open via gallery_launch.py
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
@@ -42,17 +46,23 @@ Houdini-PC-pipeline/
       metadata.py            # build_metadata, write_metadata, read_metadata
       validation.py          # validate_* functions
       indexer.py             # Scan publishes → index.json (rebuild())
+      context.py             # Parse hip path → $SHOT/$SEQ/$TASK/$VER vars
       naming_conventions.py  # Naming pattern helpers (standalone shim)
     file_manager.py          # PySide6 File Manager dialog
     publisher.py             # PySide6 Publisher dialog
     naming_conventions.py    # Naming helpers (used by publisher.py)
   houdini/
+    scripts/                 # Houdini auto-run hooks
+      123.py                 # On new scene — clear pipeline vars
+      456.py                 # On hip load — apply pipeline vars from hip path
     tool_scripts/            # Shelf tool button scripts
       file_manager_launch.py
-      gallery_launch.py      # Starts http.server + opens gallery.html
       publisher_launch.py
+      apply_pipeline_vars_launch.py  # Manual reapply + status message
   docs/
     pipeline_api.md          # pipeline package function reference
+    deadline_setup.md        # Deadline render farm integration
+    houdini_mcp_setup.md     # Houdini MCP bridge for Claude Code (experimental)
   tests/
     test_pipeline.py         # Unit tests for pipeline package
   .gitignore
@@ -64,7 +74,11 @@ Houdini-PC-pipeline/
 |------|-------------|
 | File Manager | Run `file_manager_launch.py` shelf button in Houdini |
 | Publisher | Run `publisher_launch.py` shelf button in Houdini |
-| Gallery | Run `gallery_launch.py` shelf button — opens http://127.0.0.1:8000/gallery.html |
+| Reapply pipeline vars | Run `apply_pipeline_vars_launch.py` shelf button — also auto-fires on every HIP load |
+| Submit to Deadline | **Thinkbox** shelf → **Submit to Deadline** (select a ROP first) |
+| Deadline Monitor | **Thinkbox** shelf → **Open Monitor**, or run `/opt/Thinkbox/Deadline10/bin/deadlinemonitor` |
+| Deadline check | **Thinkbox** shelf → **Check Deadline** — prints connectivity diagnostics to Python Shell |
+| Houdini MCP (Claude Code control) | **MCP** shelf → **Toggle MCP Server** — starts listener on `localhost:9876`. See `docs/houdini_mcp_setup.md` |
 
 ## Workflow — collaborating with Claude
 
@@ -135,6 +149,10 @@ Houdini-PC-pipeline/
 
 11. **No new web gallery surfaces.** The gallery is a single static `gallery.html` that reads `index.json`.  Do not introduce server endpoints, React build steps, or additional HTML files for the gallery.
 
+12. **Deadline reads, never writes project metadata.** A Deadline job's only job is to render or sim — outputs land on disk under `publish/render/{task}/v###/` or `publish/cache/...`. The pipeline picks up new outputs via `indexer.rebuild()` (run automatically by `publisher.py`, or manually). Never write `metadata.json` from inside a job.
+
+13. **ROP output paths set before HIP save.** The ROP's output picture path must point inside `publish/...` before the HIP is saved and submitted. Path building uses `pipeline.publish.*` helpers — never hand-typed paths in a ROP. The render farm renders whatever the HIP says.
+
 ## Naming conventions
 
 | File type      | Pattern                               |
@@ -182,6 +200,8 @@ HOUDINI_PIPELINE_ROOT = /home/maxborg/projects/Houdini-PC-pipeline
 PYTHONPATH = $HOUDINI_PIPELINE_ROOT/python;&
 HOUDINI_PATH = $HOUDINI_PIPELINE_ROOT/houdini;&
 ```
+
+A separate Houdini package at `~/houdini21.0/packages/deadline.json` wires the Deadline submitter (adds the submitter to `PYTHONPATH` and the Deadline HDA to `HOUDINI_OTLSCAN_PATH`, and a custom shelf at `~/houdini21.0/toolbar/deadline.shelf` registers the Thinkbox tools). The package and `houdini.env` coexist — Houdini merges environment from both. See `docs/deadline_setup.md` for the full integration model.
 
 ## Houdini API Reference
 

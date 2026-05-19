@@ -24,6 +24,7 @@ from `pipeline/__init__.py` for backward compatibility.
 | `metadata.py` | Publish metadata schema + I/O |
 | `validation.py` | Centralised validators |
 | `indexer.py` | Project publish index builder |
+| `context.py` | Parse current HIP path → Houdini env vars (`$SHOT` etc.) |
 
 ---
 
@@ -380,3 +381,49 @@ pipeline.build_metadata(
 
 The indexer groups wedges automatically (same entity+task, different wedge values).
 The gallery detail panel displays wedge info when present.
+
+---
+
+## Context — HIP path → Houdini variables
+
+A HIP that sits under the pipeline layout already encodes every entity field
+in its path. `pipeline.context` parses that path and pushes the fields into
+Houdini as environment variables so ROPs and File SOPs can reference
+`$SHOT`, `$SEQ`, `$TASK`, etc. instead of hand-typed strings.
+
+Variables applied:
+
+| Var | Source | Notes |
+|---|---|---|
+| `$PROJECT` | project folder | always set when context resolves |
+| `$SEQ` | sequence code | shot context only |
+| `$SHOT` | shot code | shot context only |
+| `$ASSETTYPE` | asset type | asset context only |
+| `$ASSET` | asset name | asset context only |
+| `$TASK` | `parse_hip_filename(hip).task` | derived from filename |
+| `$VER` | zero-padded version | `"001"`, etc. — use as `v$VER` in paths |
+
+Reserved for a follow-up pass (per-shot `.shot.json`): `$SHOTSTART`,
+`$SHOTEND`, `$FPS`, `$SHOTWIDTH`, `$SHOTHEIGHT`. Not set by this module.
+
+### `context_from_hip(hip_path) -> dict | None`
+Parse a hip path into `{kind, project, seq, shot, asset_type, asset, task,
+version, version_str}`. Returns `None` if the hip is outside `projects_root`,
+doesn't sit in `.../FX/work/houdini/`, or has an unparseable filename.
+Pure function — no Houdini import — so the parsing logic is unit-testable.
+
+### `apply_to_houdini(ctx: dict | None) -> dict`
+Push the context dict into the live Houdini session two ways for every var:
+`hou.putenv(NAME, VAL)` (so `hou.getenv` works) **and**
+`hou.hscript('set -g NAME = "VAL"')` (so the variable appears in
+**Edit → Aliases and Variables**). After applying, runs `hou.hscript("varchange")`
+to refresh the Variables window without a manual reopen. Passing `None` clears
+every pipeline var so a hip outside the project tree doesn't inherit stale
+values from a previous load. Returns the `{var: value}` map that was applied.
+
+### `apply_from_current_hip() -> dict`
+Convenience wrapper: reads `hou.hipFile.path()` and applies. Wired into
+`houdini/scripts/456.py` (runs on every HIP load) and
+`houdini/scripts/123.py` (runs on new scene; clears vars). A shelf tool
+`apply_pipeline_vars_launch.py` reapplies on demand and prints the resolved
+vars to the status bar.
