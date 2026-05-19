@@ -62,6 +62,7 @@ Houdini-PC-pipeline/
   docs/
     pipeline_api.md          # pipeline package function reference
     deadline_setup.md        # Deadline render farm integration
+    houdini_mcp_setup.md     # Houdini MCP bridge for Claude Code (experimental)
   tests/
     test_pipeline.py         # Unit tests for pipeline package
   .gitignore
@@ -77,6 +78,7 @@ Houdini-PC-pipeline/
 | Submit to Deadline | **Thinkbox** shelf → **Submit to Deadline** (select a ROP first) |
 | Deadline Monitor | **Thinkbox** shelf → **Open Monitor**, or run `/opt/Thinkbox/Deadline10/bin/deadlinemonitor` |
 | Deadline check | **Thinkbox** shelf → **Check Deadline** — prints connectivity diagnostics to Python Shell |
+| Houdini MCP (Claude Code control) | **MCP** shelf → **Toggle MCP Server** — starts listener on `localhost:9876`. See `docs/houdini_mcp_setup.md` |
 
 ## Workflow — collaborating with Claude
 
