@@ -66,7 +66,7 @@ The pipeline's `projects_root` (from `pipeline_config.json`) is the *only* path 
 
 | Concern | Value | Why |
 |---|---|---|
-| `projects_root` | `/home/maxborg/projects/shows` | Set in `pipeline_config.json`. Workers read HIPs and write outputs under this tree. |
+| `projects_root` | `/mnt/projects` | Set in `pipeline_config.json`. Workers read HIPs and write outputs under this tree. Lives on `/mnt` so the path is identical whether the tree is local-only or NFS-exported to a future render node. |
 | `HOUDINI_TEMP_DIR` | `/mnt/cache/tmp` | Set by `deadline.json` package. Keeps flipbooks/autosaves off `$HOME`. |
 | Deadline repo | `/mnt/deadline/repository` | NFS-export target when a second machine joins. |
 | PDG working dir | `/mnt/cache/pdg/{hipname}/` | TOPs scheduler temp; identical across all (future) nodes. |
@@ -79,7 +79,7 @@ Both the project tree and the Deadline repo are local directories on the same NV
 
 When a Linux render node joins:
 1. NFS-export `/mnt/deadline/repository` from this workstation.
-2. NFS-export the project tree. The cleanest move is to make `/mnt/projects` the real root and update `pipeline_config.json → projects_root`. Until then, NFS-export `/home/maxborg/projects/shows` directly at the same path on the node.
+2. NFS-export `/mnt/projects` from this workstation. Mount it at `/mnt/projects` on the render node — the path is already correct on both sides because `projects_root` is `/mnt/projects` in `pipeline_config.json`.
 3. Enable Mongo TLS + auth via `deadlinecommand CreateNewCertificates` and rebind to the LAN IP.
 4. Install only the Deadline Client on the new node; point it at the mounted repo and LAN Mongo.
 
@@ -121,9 +121,7 @@ The PDG paths must be identical across all future nodes — `/mnt/cache/pdg` is 
 
 | Item | Status | Fix |
 |---|---|---|
-| `deadline.json` package sets `JOB=/mnt/projects/$HIPNAME` | wrong root for this pipeline | Either change `projects_root` to `/mnt/projects` or remove the `JOB` env var from the package. Recommend removing — the pipeline's `paths.py` already manages every path; `JOB` is legacy noise. |
 | Deadline Limit `gpu0` for ComfyUI co-residency | not yet created | `deadlinecommand -CreateLimitGroup gpu0 1 "Single GPU on workstation" "" ""` — gates Karma XPU / Redshift jobs so they don't fight ComfyUI for the 4070 SUPER's 12 GB VRAM. |
-| Pools `houdini`, `sim`, `render` + group `houdini-fx` | not yet created | `deadlinecommand -AddPool` × 3 and `-AddGroup houdini-fx`. Build the structure now even on one Worker so no job-retagging when a node joins. |
 | `~/houdini21.0_BACKUP` left over from prior setup | review and clean | Verify no settings need to be salvaged, then remove. |
 | Deadline plugin support for Houdini 21 | patched locally via `custom/plugins/Houdini/` | Stock plugin (10.4.1.10) tops out at H20.5. Drop the custom override when Thinkbox ships native H21 support. |
 
@@ -151,6 +149,17 @@ mongosh --quiet deadline10db --eval \
 1. `tail -40 /var/log/Thinkbox/Deadline10/deadlineslave-pop-os-*.log` — check for plugin errors.
 2. In Monitor, right-click the worker → **Modify Worker Properties** → confirm Pools/Groups include the job's pool.
 3. If a Houdini job fails with "Could not find Houdini executable" — check `/mnt/deadline/repository/custom/plugins/Houdini/Houdini.param` has the H21 entry and the path points at the real `/opt/hfs21.0.650/bin/hython`.
+
+### Re-assigning pools/groups on a worker
+
+The CLI verbs for worker pool/group assignment in Deadline 10.4 are **dedicated** commands, not a generic setter:
+
+```bash
+deadlinecommand -SetPoolsForSlave pop-os houdini,sim,render
+deadlinecommand -SetGroupsForSlave pop-os houdini-fx
+```
+
+`deadlinecommand -SetWorkerSetting <host> Pools <list>` errors with `could not find job info file` — that verb expects a job ID, not a worker name. The legacy "Slave" naming in the command spelling is intentional (Mongo schema still uses `SlaveInfo`).
 
 ### Pause Deadline GPU jobs (so ComfyUI gets the GPU)
 
