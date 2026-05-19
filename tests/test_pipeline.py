@@ -466,3 +466,88 @@ def test_rebuild_writes_root_index(temp_env):
     # thumbnail auto-detected and relativized
     assert pub["outputs"]["thumbnail"].endswith("dummy.jpg")
     assert not pub["outputs"]["thumbnail"].startswith("/")
+
+
+# ---------------------------------------------------------------------------
+# Context — HIP path → pipeline variables
+# ---------------------------------------------------------------------------
+
+def _make_hip(root: Path, *parts: str) -> Path:
+    """Create an empty hip file at root/*parts and return its path."""
+    p = root.joinpath(*parts)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
+    return p
+
+
+def test_context_from_hip_shot(tmp_path):
+    import pipeline
+    root = tmp_path / "shows"
+    hip = _make_hip(
+        root, "drone", "SQ010", "0010", "FX", "work", "houdini",
+        "drone_fx_falling-ice_v007.hip",
+    )
+    ctx = pipeline.context_from_hip(hip)
+    assert ctx == {
+        "kind": "shot",
+        "project": "drone",
+        "seq": "SQ010",
+        "shot": "0010",
+        "asset_type": None,
+        "asset": None,
+        "task": "falling-ice",
+        "version": 7,
+        "version_str": "007",
+    }
+
+
+def test_context_from_hip_asset(tmp_path):
+    import pipeline
+    root = tmp_path / "shows"
+    hip = _make_hip(
+        root, "drone", "assets", "character", "hero", "FX", "work", "houdini",
+        "hero_fx_dust-sim_v003.hip",
+    )
+    ctx = pipeline.context_from_hip(hip)
+    assert ctx == {
+        "kind": "asset",
+        "project": "drone",
+        "seq": None,
+        "shot": None,
+        "asset_type": "character",
+        "asset": "hero",
+        "task": "dust-sim",
+        "version": 3,
+        "version_str": "003",
+    }
+
+
+def test_context_from_hip_outside_projects_root(tmp_path):
+    import pipeline
+    stray = tmp_path / "elsewhere" / "drone_fx_test_v001.hip"
+    stray.parent.mkdir(parents=True)
+    stray.touch()
+    assert pipeline.context_from_hip(stray) is None
+
+
+def test_context_from_hip_wrong_layout(tmp_path):
+    import pipeline
+    root = tmp_path / "shows"
+    # Missing the FX/work/houdini segment — hip in the project root.
+    hip = _make_hip(root, "drone", "drone_fx_test_v001.hip")
+    assert pipeline.context_from_hip(hip) is None
+
+
+def test_context_from_hip_bad_filename(tmp_path):
+    import pipeline
+    root = tmp_path / "shows"
+    hip = _make_hip(
+        root, "drone", "SQ010", "0010", "FX", "work", "houdini", "not_a_pipeline_file.hip",
+    )
+    assert pipeline.context_from_hip(hip) is None
+
+
+def test_context_from_hip_empty_path():
+    import pipeline
+    assert pipeline.context_from_hip("") is None
+    assert pipeline.context_from_hip(None) is None

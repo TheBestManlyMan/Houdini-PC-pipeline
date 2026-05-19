@@ -117,6 +117,16 @@ hou.getenv("MY_VAR")           # Get env var (returns None if not set)
 hou.expandString("$MY_VAR")    # Expand in a path string
 ```
 
+⚠️ **`hou.putenv` does NOT populate Edit → Aliases and Variables.** That window
+only lists global hscript variables (set via `set -g`). Parm expansion works
+with either mechanism — they share a lookup table — but if you want the
+variable to show in the Variables UI, also run:
+
+```python
+hou.hscript('set -g MY_VAR = "value"')
+hou.hscript("varchange")        # tell the UI to refresh
+```
+
 ---
 
 ## hou.HDAModule — HDA Python Module

@@ -130,6 +130,13 @@ from .indexer import (
     detect_stale_dependencies,
 )
 
+# Context — Houdini variables derived from the current hip path
+from .context import (
+    context_from_hip,
+    apply_to_houdini,
+    apply_from_current_hip,
+)
+
 
 __all__ = [
     # config
@@ -168,5 +175,6 @@ __all__ = [
     "build_project_index", "write_project_index", "read_project_index",
     "scan_all_projects", "rebuild",
     "get_publish_dependencies", "get_downstream_dependents", "detect_stale_dependencies",
-
+    # context
+    "context_from_hip", "apply_to_houdini", "apply_from_current_hip",
 ]

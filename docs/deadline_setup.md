@@ -121,7 +121,7 @@ The PDG paths must be identical across all future nodes — `/mnt/cache/pdg` is 
 
 | Item | Status | Fix |
 |---|---|---|
-| Deadline Limit `gpu0` for ComfyUI co-residency | not yet created | `deadlinecommand -CreateLimitGroup gpu0 1 "Single GPU on workstation" "" ""` — gates Karma XPU / Redshift jobs so they don't fight ComfyUI for the 4070 SUPER's 12 GB VRAM. |
+| Auto-toggle `gpu0` limit when ComfyUI starts/stops | manual today | Limit exists (max=1). To enforce, add `gpu0` in the submitter's **Limits** field on any Karma XPU / Redshift / Octane job. To pause for ComfyUI, run `deadlinecommand -SetLimitGroupMaximum gpu0 0`; restore with `-SetLimitGroupMaximum gpu0 1`. Wire into a ComfyUI start/stop script for automation. |
 | `~/houdini21.0_BACKUP` left over from prior setup | review and clean | Verify no settings need to be salvaged, then remove. |
 | Deadline plugin support for Houdini 21 | patched locally via `custom/plugins/Houdini/` | Stock plugin (10.4.1.10) tops out at H20.5. Drop the custom override when Thinkbox ships native H21 support. |
 
@@ -163,14 +163,12 @@ deadlinecommand -SetGroupsForSlave pop-os houdini-fx
 
 ### Pause Deadline GPU jobs (so ComfyUI gets the GPU)
 
-Once the `gpu0` limit exists:
-
 ```bash
-deadlinecommand -SetLimitGroupOverage gpu0 -1    # block all jobs tagged with gpu0
-deadlinecommand -SetLimitGroupOverage gpu0 0     # re-allow
+deadlinecommand -SetLimitGroupMaximum gpu0 0     # block all jobs tagged with gpu0
+deadlinecommand -SetLimitGroupMaximum gpu0 1     # re-allow (max=1 concurrent)
 ```
 
-Wire into `comfyui-start.sh` / `comfyui-stop.sh` for automatic toggling.
+Wire into `comfyui-start.sh` / `comfyui-stop.sh` for automatic toggling. Note: this only affects jobs whose **Limits** field includes `gpu0` — set it on the submitter dialog for any Karma XPU / Redshift / Octane render.
 
 ---
 

@@ -28,7 +28,6 @@ Sharing with clients: drag the projects root onto Netlify Drop and paste the URL
 
 ```
 Houdini-PC-pipeline/
-  gallery.html               # Publish gallery — open via gallery_launch.py
   pipeline_config.json       # Settings: projects_root, ffmpeg path, defaults
   projects.json              # Project list (gitignored — local only)
   projects.json.example      # Template for projects.json
@@ -47,15 +46,19 @@ Houdini-PC-pipeline/
       metadata.py            # build_metadata, write_metadata, read_metadata
       validation.py          # validate_* functions
       indexer.py             # Scan publishes → index.json (rebuild())
+      context.py             # Parse hip path → $SHOT/$SEQ/$TASK/$VER vars
       naming_conventions.py  # Naming pattern helpers (standalone shim)
     file_manager.py          # PySide6 File Manager dialog
     publisher.py             # PySide6 Publisher dialog
     naming_conventions.py    # Naming helpers (used by publisher.py)
   houdini/
+    scripts/                 # Houdini auto-run hooks
+      123.py                 # On new scene — clear pipeline vars
+      456.py                 # On hip load — apply pipeline vars from hip path
     tool_scripts/            # Shelf tool button scripts
       file_manager_launch.py
-      gallery_launch.py      # Starts http.server + opens gallery.html
       publisher_launch.py
+      apply_pipeline_vars_launch.py  # Manual reapply + status message
   docs/
     pipeline_api.md          # pipeline package function reference
     deadline_setup.md        # Deadline render farm integration
@@ -70,7 +73,7 @@ Houdini-PC-pipeline/
 |------|-------------|
 | File Manager | Run `file_manager_launch.py` shelf button in Houdini |
 | Publisher | Run `publisher_launch.py` shelf button in Houdini |
-| Gallery | Run `gallery_launch.py` shelf button — opens http://127.0.0.1:8000/gallery.html |
+| Reapply pipeline vars | Run `apply_pipeline_vars_launch.py` shelf button — also auto-fires on every HIP load |
 | Submit to Deadline | **Thinkbox** shelf → **Submit to Deadline** (select a ROP first) |
 | Deadline Monitor | **Thinkbox** shelf → **Open Monitor**, or run `/opt/Thinkbox/Deadline10/bin/deadlinemonitor` |
 | Deadline check | **Thinkbox** shelf → **Check Deadline** — prints connectivity diagnostics to Python Shell |
