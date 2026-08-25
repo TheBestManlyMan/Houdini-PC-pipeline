@@ -66,6 +66,19 @@ def validate(name: str = DEFAULT_MAP, source_joints=None, target_joints=None) ->
         if t not in mapped:
             issues.append("fbik target is not a mapped joint: %s" % t)
 
+    for pair in data["target"].get("tpose_level_bones", []):
+        for joint in pair:
+            if tgt and joint not in tgt:
+                issues.append("tpose_level_bones joint not in skeleton: %s" % joint)
+
+    scale = data.get("scale", {})
+    for joint in scale.get("source_bones", []):
+        if src and joint not in src:
+            issues.append("scale source bone not in skeleton: %s" % joint)
+    for joint in scale.get("target_bones", []):
+        if tgt and joint not in tgt:
+            issues.append("scale target bone not in skeleton: %s" % joint)
+
     static = data["source"].get("static_joint")
     if static and static in data["joint_map"]:
         issues.append("static joint %s must not be mapped (locomotion is on %s)"

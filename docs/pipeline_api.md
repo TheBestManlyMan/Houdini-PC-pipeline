@@ -495,6 +495,12 @@ Builds or refreshes `/obj/kimodo_import` (`mocap_anim` + `mocap_rest` →
 `OUT` / `OUT_REST`) pointing at the clip, and sets the playbar to the clip's
 frame count and rate. Returns the `OUT` null.
 
+### `scene.build_retarget(target_skeleton, rig_map="soma_mixamo", ...) -> hou.Node`
+Builds `/obj/kimodo_retarget` — the SOMA → Mixamo chain — and returns its
+`OUT_RETARGET` null. Self-calibrating: the source size match (leg-length ratio)
+and the A-pose → T-pose rotations are solved from the two skeletons in the
+scene, not hardcoded. Requires `/obj/kimodo_import` (import a clip first).
+
 ### `retarget.load_rig_map(name="soma_mixamo") -> dict`
 Reads `config/rig_maps/{name}.json`. `joint_map()` and `fbik_targets()` are the
 common accessors; `validate(name, source_joints, target_joints)` returns the

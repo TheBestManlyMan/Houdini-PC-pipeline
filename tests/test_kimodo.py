@@ -220,3 +220,23 @@ def test_fbik_targets_are_mapped_joints():
     from pipeline.kimodo import retarget
     mapped = set(retarget.joint_map().values())
     assert set(retarget.fbik_targets()) <= mapped
+
+
+def test_rig_map_tpose_and_scale_reference_real_joints():
+    """The T-pose levelling and size-match specs must name joints that exist."""
+    from pipeline.kimodo import retarget
+    data = retarget.load_rig_map()
+    tgt = set(data["target"]["joints"])
+    src = set(data["source"]["joints"])
+    assert data["target"]["tpose_level_bones"], "no T-pose reference for an A-pose rig"
+    for pair in data["target"]["tpose_level_bones"]:
+        assert set(pair) <= tgt
+    assert set(data["scale"]["source_bones"]) <= src
+    assert set(data["scale"]["target_bones"]) <= tgt
+    assert retarget.validate() == []
+
+
+def test_validate_catches_unknown_tpose_joint():
+    from pipeline.kimodo import retarget
+    issues = retarget.validate(target_joints=["mixamorig:Hips"])
+    assert any("tpose_level_bones joint not in skeleton" in i for i in issues)

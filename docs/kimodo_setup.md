@@ -150,6 +150,46 @@ Both joint lists were read from real skeletons, not guessed. What it records:
 `retarget.validate(source_joints=..., target_joints=...)` checks the map
 against the skeletons actually loaded in the scene.
 
+## The retarget network (Phase 4)
+
+```python
+from pipeline.kimodo import scene
+scene.build_retarget("/obj/Soldier_Rig/Capture_Pose")   # -> /obj/kimodo_retarget/OUT_RETARGET
+```
+
+```
+SRC_ANIM ─ SRC_SCALE_ANIM ─┐
+                           ├─ SRC_STASH ─────────────────┐  source rest = SOMA T-pose
+SRC_REST ─ SRC_SCALE_REST ─┘                             │
+                                                         │
+TGT_REST ─ MAP ─ TGT_TPOSE_POSE ─ TGT_TPOSE ─────────────┴─ FBIK ─ OUT_RETARGET
+```
+
+Nothing in it is hardcoded: the joint pairs come from the rig map, the source
+scale is the measured leg-length ratio, and the A-pose → T-pose rotations are
+solved off the rig itself (two samples per joint, local X).
+
+**Why the T-pose step exists.** SOMA rests in a T-pose, the Mixamo soldier in an
+A-pose (measured: 50.0° down at the shoulder, 45.8° at the elbow). Handing FBIK
+the A-pose rest leaves the arms badly off; levelling them into a T-pose first
+and stashing that as the target rest fixes it.
+
+Measured on `idle_guard_01`, mean bone-direction error against the source over
+5 frames:
+
+| Setup | Mean error | Hands |
+|---|---|---|
+| A-pose rest (naive) | 17.9° | ~47° |
+| **T-posed rest (built)** | **7.3°** | **8–12°** |
+| No FBIK offsets | 85.7° | — |
+
+Bone lengths are preserved exactly, feet stay at the rig's own foot height
+(0.096–0.100 m against a 0.096 m rest), and the hips follow the source.
+
+Known gap: the upper arms still read ~30° off, because the SOMA and Mixamo
+clavicle/shoulder orientations differ. Hands — what the Phase 5 spear grip needs
+— are within ~10°, so this is parked rather than solved.
+
 ## Troubleshooting
 
 | Symptom | Cause |

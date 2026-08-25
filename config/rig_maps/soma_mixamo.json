@@ -159,7 +159,26 @@
       "mixamorig:RightLeg",
       "mixamorig:RightFoot",
       "mixamorig:RightToeBase"
-    ]
+    ],
+    "tpose_level_bones": [
+      [
+        "mixamorig:LeftArm",
+        "mixamorig:LeftForeArm"
+      ],
+      [
+        "mixamorig:LeftForeArm",
+        "mixamorig:LeftHand"
+      ],
+      [
+        "mixamorig:RightArm",
+        "mixamorig:RightForeArm"
+      ],
+      [
+        "mixamorig:RightForeArm",
+        "mixamorig:RightHand"
+      ]
+    ],
+    "_tpose_comment": "The rig rests in an A-pose (arms 50.0 deg down at the shoulder, 45.8 deg at the elbow, measured). Retargeting needs a T-pose reference: scene.build_retarget() levels these bones with a Rig Pose SOP, solving each joint's local X rotation from the rig itself, and stashes the result as the target rest. Measured effect: mean bone-direction error against the SOMA source drops from 17.9 deg to 7.3 deg, hands from ~47 deg to ~10 deg."
   },
   "joint_map": {
     "Hips": "mixamorig:Hips",
@@ -205,7 +224,8 @@
     "Do not map SOMA 'Root' as the locomotion root; it is static. Locomotion lives on 'Hips'.",
     "Disable automatic bounds-based scaling where it fights the explicit 0.01 BVH scale.",
     "Prefer the sparse fbik_targets set over driving every mapped joint.",
-    "Leaf joints (mixamorig:*_End, finger *4) exist only on the animated branch - never map them."
+    "Leaf joints (mixamorig:*_End, finger *4) exist only on the animated branch - never map them.",
+    "Never let Rig Match Pose bbox-scale the target (bboxmatch): it resizes the Mixamo rig to the SOMA bounds. Size matching belongs on the source, by leg-length ratio."
   ],
   "chain": [
     "Kimodo SOMA BVH",
@@ -214,5 +234,18 @@
     "Map Points",
     "Full Body IK",
     "Mixamo skeleton"
-  ]
+  ],
+  "scale": {
+    "method": "leg-length ratio (UpLeg->Leg->Foot), source scaled to target",
+    "source_bones": [
+      "LeftLeg",
+      "LeftShin",
+      "LeftFoot"
+    ],
+    "target_bones": [
+      "mixamorig:LeftUpLeg",
+      "mixamorig:LeftLeg",
+      "mixamorig:LeftFoot"
+    ]
+  }
 }
