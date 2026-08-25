@@ -48,10 +48,23 @@ Houdini-PC-pipeline/
       indexer.py             # Scan publishes → index.json (rebuild())
       context.py             # Parse hip path → $SHOT/$SEQ/$TASK/$VER vars
       naming_conventions.py  # Naming pattern helpers (standalone shim)
+      kimodo/                # Kimodo text-to-motion bridge (external process)
+        config.py            # Install locations + sanitised child env
+        clips.py             # Clip library: paths, sidecars, BVH probing
+        runner.py            # kimodo_gen/kimodo_convert commands + blocking run
+        retarget.py          # SOMA -> Mixamo rig map data + validation
+        job.py               # QProcess sequencer for the UI (imports Qt)
+        scene.py             # /obj/kimodo_import BVH network (imports hou)
     file_manager.py          # PySide6 File Manager dialog
     publisher.py             # PySide6 Publisher dialog
     naming_conventions.py    # Naming helpers (used by publisher.py)
+    kimodo_panel.py          # PySide6 Kimodo panel (thin — calls pipeline.kimodo)
+  config/
+    rig_maps/
+      soma_mixamo.json       # SOMA -> canonical Mixamo joint map
   houdini/
+    python_panels/           # Python Panel definitions
+      kimodo.pypanel
     scripts/                 # Houdini auto-run hooks
       123.py                 # On new scene — clear pipeline vars
       456.py                 # On hip load — apply pipeline vars from hip path
@@ -61,10 +74,12 @@ Houdini-PC-pipeline/
       apply_pipeline_vars_launch.py  # Manual reapply + status message
   docs/
     pipeline_api.md          # pipeline package function reference
+    kimodo_setup.md          # Kimodo text-to-motion bridge
     deadline_setup.md        # Deadline render farm integration
     houdini_mcp_setup.md     # Houdini MCP bridge for Claude Code (experimental)
   tests/
     test_pipeline.py         # Unit tests for pipeline package
+    test_kimodo.py           # Unit tests for pipeline.kimodo (offline)
   .gitignore
 ```
 
@@ -79,6 +94,7 @@ Houdini-PC-pipeline/
 | Deadline Monitor | **Thinkbox** shelf → **Open Monitor**, or run `/opt/Thinkbox/Deadline10/bin/deadlinemonitor` |
 | Deadline check | **Thinkbox** shelf → **Check Deadline** — prints connectivity diagnostics to Python Shell |
 | Houdini MCP (Claude Code control) | **MCP** shelf → **Toggle MCP Server** — starts listener on `localhost:9876`. See `docs/houdini_mcp_setup.md` |
+| Kimodo text-to-motion | Pane tab → **New Pane Tab Type → Kimodo**. Generates clips into the motion library and imports the BVH. See `docs/kimodo_setup.md` |
 
 ## Workflow — collaborating with Claude
 
@@ -151,7 +167,9 @@ Houdini-PC-pipeline/
 
 12. **Deadline reads, never writes project metadata.** A Deadline job's only job is to render or sim — outputs land on disk under `publish/render/{task}/v###/` or `publish/cache/...`. The pipeline picks up new outputs via `indexer.rebuild()` (run automatically by `publisher.py`, or manually). Never write `metadata.json` from inside a job.
 
-13. **ROP output paths set before HIP save.** The ROP's output picture path must point inside `publish/...` before the HIP is saved and submitted. Path building uses `pipeline.publish.*` helpers — never hand-typed paths in a ROP. The render farm renders whatever the HIP says.
+13. **External AI tools stay external.** Kimodo (and anything else with its own venv) runs as a subprocess against its own interpreter — never installed into, or imported by, Houdini's Python. Strip `PYTHONHOME`/`PYTHONPATH` from every child process; `pipeline.kimodo.config.child_env()` is the reference implementation.
+
+14. **ROP output paths set before HIP save.** The ROP's output picture path must point inside `publish/...` before the HIP is saved and submitted. Path building uses `pipeline.publish.*` helpers — never hand-typed paths in a ROP. The render farm renders whatever the HIP says.
 
 ## Naming conventions
 
@@ -194,7 +212,7 @@ Houdini-PC-pipeline/
 
 ## Houdini environment wiring
 
-In `~/houdini21.0/houdini.env`:
+In `~/houdini21.0/houdini.env` (and the same three lines in `~/houdini22.0/houdini.env`):
 ```
 HOUDINI_PIPELINE_ROOT = /home/maxborg/projects/Houdini-PC-pipeline
 PYTHONPATH = $HOUDINI_PIPELINE_ROOT/python;&
@@ -202,6 +220,8 @@ HOUDINI_PATH = $HOUDINI_PIPELINE_ROOT/houdini;&
 ```
 
 A separate Houdini package at `~/houdini21.0/packages/deadline.json` wires the Deadline submitter (adds the submitter to `PYTHONPATH` and the Deadline HDA to `HOUDINI_OTLSCAN_PATH`, and a custom shelf at `~/houdini21.0/toolbar/deadline.shelf` registers the Thinkbox tools). The package and `houdini.env` coexist — Houdini merges environment from both. See `docs/deadline_setup.md` for the full integration model.
+
+`HOUDINI_PATH` is also what makes `houdini/python_panels/*.pypanel` discoverable, so Python Panels live in the repo rather than a version-specific prefs directory.
 
 ## Houdini API Reference
 

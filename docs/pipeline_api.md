@@ -25,6 +25,7 @@ from `pipeline/__init__.py` for backward compatibility.
 | `validation.py` | Centralised validators |
 | `indexer.py` | Project publish index builder |
 | `context.py` | Parse current HIP path → Houdini env vars (`$SHOT` etc.) |
+| `kimodo/` | Kimodo text-to-motion bridge (subpackage — see below) |
 
 ---
 
@@ -427,3 +428,75 @@ Convenience wrapper: reads `hou.hipFile.path()` and applies. Wired into
 `houdini/scripts/123.py` (runs on new scene; clears vars). A shelf tool
 `apply_pipeline_vars_launch.py` reapplies on demand and prints the resolved
 vars to the status bar.
+
+---
+
+## Kimodo — text-to-motion (`pipeline.kimodo`)
+
+Kimodo (NVIDIA SOMA) runs as an **external process** against its own venv at
+`~/Projects/kimodo/.venv`. Nothing in Houdini imports kimodo, torch or
+transformers. Full setup notes: [`kimodo_setup.md`](kimodo_setup.md).
+
+Subpackage layout — `job` and `scene` are not re-exported, so `import
+pipeline.kimodo` stays safe outside Houdini and outside Qt:
+
+| Module | Responsibility | Imports |
+|---|---|---|
+| `kimodo/config.py` | Install locations, child-process environment | — |
+| `kimodo/clips.py` | Clip library: paths, sidecars, BVH header probing | — |
+| `kimodo/runner.py` | Command building + blocking execution | — |
+| `kimodo/retarget.py` | SOMA → Mixamo rig map data + validation | — |
+| `kimodo/job.py` | QProcess sequencer for the UI | Qt |
+| `kimodo/scene.py` | The `/obj/kimodo_import` BVH network | `hou` |
+
+### `config.install_root() -> Path`
+Kimodo checkout. `$KIMODO_ROOT` wins over the `kimodo` block of
+`pipeline_config.json`. `gen_executable()` / `convert_executable()` /
+`venv_bin(name)` resolve inside its venv.
+
+### `config.clips_root() -> Path`
+Motion library root. Empty `clips_root` in config →
+`{projects_root}/_library/motion/kimodo`.
+
+### `config.child_env(extra=None) -> dict`
+Environment for a Kimodo child of Houdini: strips `PYTHONHOME`/`PYTHONPATH`
+(Houdini's 3.13 interpreter otherwise breaks the venv's 3.10) and sets
+`TEXT_ENCODER_DEVICE=cpu`.
+
+### `config.problems() -> list[str]`
+Why Kimodo can't run right now. Empty means ready — the panel calls this on
+open and the runner calls it before every launch.
+
+### `runner.gen_command(...)` / `runner.convert_command(...)`
+argv builders for `kimodo_gen` and `kimodo_convert`. Generation is two steps so
+the NPZ stays the reproducible master and the BVH can be re-exported without
+re-generating.
+
+### `runner.run(cmd, on_output=None, timeout=None, check=True) -> int`
+Blocking execution with merged stdout/stderr streamed line by line. For hython,
+TOPs and tests — **never** Houdini's UI thread. Raises `KimodoError`.
+
+### `runner.generate_clip(prompt, stem, duration, steps, seed, ...) -> Path`
+Blocking prompt → BVH: generate NPZ, convert to SOMA BVH, write the sidecar.
+Returns the BVH path.
+
+### `clips.unique_stem(name, root=None) -> str`
+Free clip stem — appends `_002`, `_003`… rather than overwriting a clip.
+
+### `clips.write_meta(...)` / `clips.read_meta(stem)`
+The `{stem}.json` sidecar recording prompt, duration, steps, seed, model and
+fps, so a clip can be reproduced.
+
+### `clips.bvh_frame_count / bvh_frame_time / bvh_fps / bvh_joints`
+Cheap BVH **header** reads — the motion block is never parsed.
+
+### `scene.import_clip(bvh_path, set_frame_range=True, set_fps=True) -> hou.Node`
+Builds or refreshes `/obj/kimodo_import` (`mocap_anim` + `mocap_rest` →
+`OUT` / `OUT_REST`) pointing at the clip, and sets the playbar to the clip's
+frame count and rate. Returns the `OUT` null.
+
+### `retarget.load_rig_map(name="soma_mixamo") -> dict`
+Reads `config/rig_maps/{name}.json`. `joint_map()` and `fbik_targets()` are the
+common accessors; `validate(name, source_joints, target_joints)` returns the
+problems with a map — pass the joint names from the live scene to check the map
+against the skeletons actually loaded.

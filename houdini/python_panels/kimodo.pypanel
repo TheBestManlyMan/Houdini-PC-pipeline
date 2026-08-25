@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <interface name="kimodo" label="Kimodo" icon="MISC_python" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[
+def onCreateInterface():
+    import importlib
+    import kimodo_panel
+    importlib.reload(kimodo_panel)
+    return kimodo_panel.KimodoPanel()
+]]></script>
+    <includeInPaneTabMenu menu_position="0" create_separator="false"/>
+    <help><![CDATA[Generate Kimodo text-to-motion clips and import them as SOMA BVH via KineFX.]]></help>
+  </interface>
+</pythonPanelDocument>

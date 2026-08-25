@@ -2,5 +2,14 @@
   "projects_root": "/mnt/projects",
   "ffmpeg": "ffmpeg",
   "default_fps": 24,
-  "default_resolution": "1920x1080"
+  "default_resolution": "1920x1080",
+  "kimodo": {
+    "install_root": "~/Projects/kimodo",
+    "venv": ".venv",
+    "clips_root": "",
+    "fps": 30.0,
+    "bvh_scale": 0.01,
+    "text_encoder_device": "cpu",
+    "model": ""
+  }
 }
