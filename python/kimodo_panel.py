@@ -63,6 +63,12 @@ class KimodoPanel(QtWidgets.QWidget):
             "motion between them. Duration is derived from the scene frame range.")
         form.addRow("Guide Frames", self.guide_frames)
 
+        self.guide_source = QtWidgets.QLineEdit()
+        self.guide_source.setPlaceholderText("auto — the Rig Pose SOP in /obj/Soldier_Rig")
+        self.guide_source.setToolTip(
+            "SOP holding the posed Mixamo skeleton. Leave blank to auto-detect.")
+        form.addRow("Guide Source", self.guide_source)
+
         self.clipname = QtWidgets.QLineEdit()
         self.clipname.setPlaceholderText("auto (from prompt)")
         form.addRow("Clip name", self.clipname)
@@ -130,7 +136,8 @@ class KimodoPanel(QtWidgets.QWidget):
         stem = self._reserve_stem()
         try:
             prepared = scene.prepare_guide_constraints(
-                stem, self.guide_frames.text())
+                stem, self.guide_frames.text(),
+                source_skeleton=self.guide_source.text().strip() or None)
         except Exception as exc:   # bad frames, missing rig, missing import network
             self._log("Guide frames: %s" % exc)
             self._set_status("Guide frames rejected", error=True)
@@ -141,6 +148,7 @@ class KimodoPanel(QtWidgets.QWidget):
         self._log("Frame range %d-%d @ %g fps -> duration %.2fs" % (
             prepared["houdini_start_frame"], prepared["houdini_end_frame"],
             prepared["fps"], prepared["duration"]))
+        self._log("Source: %s" % prepared["source_skeleton"])
         self._log("Constraints: %s" % prepared["constraints"])
         self._launch(duration=prepared["duration"], stem=stem,
                      constraints=prepared["constraints"],

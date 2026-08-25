@@ -501,6 +501,32 @@ Builds `/obj/kimodo_retarget` — the SOMA → Mixamo chain — and returns its
 and the A-pose → T-pose rotations are solved from the two skeletons in the
 scene, not hardcoded. Requires `/obj/kimodo_import` (import a clip first).
 
+### `constraints.parse_guide_frames(text, start_frame=None, end_frame=None) -> list[int]`
+`"1, 12, 26, 40"` → `[1, 12, 26, 40]`. Sorted, de-duplicated, whitespace
+ignored; raises `GuideFrameError` on junk, on fewer than two distinct frames, or
+outside the range. Deliberately outside the UI.
+
+### `constraints.to_kimodo_frame(houdini_frame, start_frame) -> int`
+`houdini_frame - start_frame`. Kimodo indices are 0-based from the clip start;
+the start frame is the scene's, never hardcoded. `duration_for_range()` and
+`covers_frames()` keep the clip long enough to reach the last hero pose.
+
+### `constraints.write_constraints(path, poses, joint_count=None) -> Path`
+Writes Kimodo's `fullbody` constraint file from `GuidePose` objects —
+`frame_indices`, `local_joints_rot` (axis-angle, model joint order) and
+`root_positions`.
+
+### `scene.build_reverse_retarget(...) -> hou.Node`
+Builds `/obj/kimodo_guide` — Mixamo → SOMA, the mirror of `build_retarget()`.
+
+### `scene.soma_pose(node, frame, model_joints, model_parents) -> (local_rot, root, positions)`
+One SOMA pose off a KineFX skeleton, in Kimodo's convention.
+
+### `scene.prepare_guide_constraints(stem, frames, ...) -> dict`
+The one call the panel makes: parse the frames, sample the poses, write both the
+constraints file and the interchange file, and derive the duration from the
+frame range. Returns the paths, frames, Kimodo indices and duration.
+
 ### `retarget.load_rig_map(name="soma_mixamo") -> dict`
 Reads `config/rig_maps/{name}.json`. `joint_map()` and `fbik_targets()` are the
 common accessors; `validate(name, source_joints, target_joints)` returns the

@@ -259,6 +259,51 @@ and compares against the joint positions Houdini recorded.
 The sidecar records prompt, seed, steps, fps, the Houdini frame range, the guide
 frames, their Kimodo indices, the source skeleton and the constraints filename.
 
+### The reverse retarget
+
+`/obj/kimodo_guide` is the mirror of the forward network: the Mixamo rig is the
+*source* here, so the A-pose → T-pose levelling goes on the source side, SOMA
+(already a T-pose) is the target, and the size match is the inverse leg-length
+ratio. `scene.sample_guide_poses()` reads poses off its output.
+
+**`Hips` is the model root, not the BVH's `Root`.** The BVH wraps the skeleton
+in a static `Root` joint that Kimodo has no equivalent for. Reading Hips'
+rotation relative to that wrapper throws away whatever `Root` has picked up —
+Full Body IK leaves about 2.5° on it — which tilts the entire body: invisible at
+the hips, 32 mm out at the fingertips. Hips' local rotation is its *world*
+rotation.
+
+**Fingers are not mapped**, so a guide pose carries them at the SOMA rest and
+Kimodo generates its own. An authored grip does not survive the trip — that is
+what the Phase 5 spear rig is for.
+
+### Measured — guard → battle-ready, four hero poses
+
+Round trip of the poses alone, `Mixamo → SOMA → Mixamo`:
+
+| pose | hands | feet | head | mean bone angle |
+|---|---|---|---|---|
+| standing (A-pose) | 0.6 mm | 0.2 mm | 0.1 mm | — |
+| F1 guard | 0.8 mm | 0.3 mm | 0.5 mm | 0.08° |
+| F12 anticipation | 0.8 mm | 0.4 mm | 0.6 mm | 0.09° |
+| F26 spear raised | 1.1 mm | 0.4 mm | 0.4 mm | 0.10° |
+| F40 settled ready | 0.8 mm | 0.4 mm | 0.5 mm | 0.09° |
+
+The full loop, `Mixamo → SOMA → Kimodo → SOMA → Mixamo`, against the poses that
+went in: **0.4–0.5 mm mean, 1.5 mm max** on body joints at every hero frame.
+
+Did Kimodo respect the constraints? Against the hero poses, in SOMA space:
+
+| | guided | text-only, same prompt/seed |
+|---|---|---|
+| mean error at hero frames | **10.6 mm** (0.0 mm excluding fingers) | 620 mm |
+| right-hand height at F26 | 1.770 m (hero: 1.770) | 0.876 m |
+
+58× closer, and the body joints land exactly. The inbetweens are generated, not
+interpolated: mid-raise they depart from a straight line through the hero poses
+by up to 222 mm at the right hand, and no frame is static (6–63 mm of joint
+travel per frame).
+
 ## Troubleshooting
 
 | Symptom | Cause |

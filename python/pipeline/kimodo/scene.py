@@ -123,18 +123,26 @@ DEFAULT_TARGET_SKELETON = "/obj/Soldier_Rig/Capture_Pose"
 def build_retarget(target_skeleton: str = DEFAULT_TARGET_SKELETON,
                    rig_map: str = "soma_mixamo",
                    container: str = RETARGET_CONTAINER,
-                   scale_source: bool = True) -> hou.Node:
+                   scale_source: bool = True,
+                   source_anim: str = None,
+                   source_rest: str = None) -> hou.Node:
     """Build (or refresh) the SOMA -> Mixamo retarget network. Returns its OUT null.
 
     ``target_skeleton`` is the SOP path of the Mixamo *capture pose* (rest)
     skeleton — leaf joints missing from it are never mapped, see the rig map.
+    ``source_anim``/``source_rest`` default to the import network, and are worth
+    overriding to retarget something other than the current clip — a SOMA pose
+    coming back out of the guide-pose network, say.
     """
     from . import retarget as rigmaps
 
     data = rigmaps.load_rig_map(rig_map)
-    src = import_network(create=False)
-    if src is None:
-        raise hou.OperationFailed("No %s network — import a clip first." % CONTAINER)
+    if source_anim is None or source_rest is None:
+        src = import_network(create=False)
+        if src is None:
+            raise hou.OperationFailed("No %s network — import a clip first." % CONTAINER)
+        source_anim = source_anim or (src.path() + "/" + OUT_NODE)
+        source_rest = source_rest or (src.path() + "/" + OUT_REST_NODE)
     tgt_node = hou.node(target_skeleton)
     if tgt_node is None:
         raise hou.OperationFailed("Target skeleton not found: %s" % target_skeleton)
@@ -145,9 +153,9 @@ def build_retarget(target_skeleton: str = DEFAULT_TARGET_SKELETON,
         return geo.node(name) or geo.createNode(kind, name)
 
     src_anim = node("object_merge", "SRC_ANIM")
-    src_anim.parm("objpath1").set(src.path() + "/" + OUT_NODE)
+    src_anim.parm("objpath1").set(source_anim)
     src_rest = node("object_merge", "SRC_REST")
-    src_rest.parm("objpath1").set(src.path() + "/" + OUT_REST_NODE)
+    src_rest.parm("objpath1").set(source_rest)
     tgt_rest = node("object_merge", "TGT_REST")
     tgt_rest.parm("objpath1").set(target_skeleton)
 
@@ -256,10 +264,41 @@ def _level_bones(pose, mapping, bones):
 
 GUIDE_CONTAINER = "kimodo_guide"
 GUIDE_OUT = "OUT_GUIDE"
-DEFAULT_GUIDE_SOURCE = "/obj/Soldier_Rig/Animated_Pose"
+SOLDIER_CONTAINER = "/obj/Soldier_Rig"
+DEFAULT_GUIDE_SOURCE = SOLDIER_CONTAINER + "/Animated_Pose"
 
 
-def build_reverse_retarget(source_skeleton: str = DEFAULT_GUIDE_SOURCE,
+def guide_source_default(container: str = SOLDIER_CONTAINER) -> str:
+    """Where the hero poses are read from when the caller doesn't say.
+
+    A Rig Pose SOP in the soldier container is where blocking gets authored, so
+    the last one wins; then whatever is flagged for display, if it is a Mixamo
+    skeleton; then the FBX's animated branch. Guessing is only ever a
+    convenience — pass an explicit path when it matters.
+    """
+    geo = hou.node(container)
+    if geo is None:
+        return DEFAULT_GUIDE_SOURCE
+    poses = [c for c in geo.children() if c.type().name().startswith("kinefx::rigpose")]
+    if poses:
+        return poses[-1].path()
+    display = geo.displayNode() if hasattr(geo, "displayNode") else None
+    if display is not None and _is_mixamo_skeleton(display):
+        return display.path()
+    return DEFAULT_GUIDE_SOURCE
+
+
+def _is_mixamo_skeleton(node) -> bool:
+    try:
+        geo = node.geometry()
+    except hou.Error:
+        return False
+    if geo is None or geo.findPointAttrib("name") is None:
+        return False
+    return any(p.attribValue("name").startswith("mixamorig:") for p in geo.points())
+
+
+def build_reverse_retarget(source_skeleton: str = None,
                            source_rest: str = DEFAULT_TARGET_SKELETON,
                            rig_map: str = "soma_mixamo",
                            container: str = GUIDE_CONTAINER,
@@ -272,6 +311,7 @@ def build_reverse_retarget(source_skeleton: str = DEFAULT_GUIDE_SOURCE,
     """
     from . import retarget as rigmaps
 
+    source_skeleton = source_skeleton or guide_source_default()
     data = rigmaps.load_rig_map(rig_map)
     imported = import_network(create=False)
     if imported is None:
@@ -349,7 +389,7 @@ def build_reverse_retarget(source_skeleton: str = DEFAULT_GUIDE_SOURCE,
 
 # --------------------------------------------------------------- pose sampling
 
-def soma_pose(node, frame, model_joints, model_parents, root_joint: str = "Root"):
+def soma_pose(node, frame, model_joints, model_parents):
     """Read one SOMA pose off a KineFX skeleton.
 
     Returns ``(local_rot, root_position, positions)`` where ``local_rot`` holds a
@@ -357,6 +397,12 @@ def soma_pose(node, frame, model_joints, model_parents, root_joint: str = "Root"
     a standard-T-pose SOMA BVH carries, which is what Kimodo stores as
     ``local_rot_mats``.  Houdini's point ``transform`` is row-vector and carries
     the import scale, so it is transposed and orthonormalised first.
+
+    The model has no equivalent of the BVH's ``Root`` wrapper — ``Hips`` is the
+    root — so Hips' local rotation is its world rotation. Reading it relative to
+    the Root joint instead silently drops whatever rotation Root has picked up
+    (Full Body IK leaves ~2.5 deg on it), which tilts the whole body: invisible
+    at the hips, 32 mm out at the fingertips.
     """
     geo = node.geometryAtFrame(frame)
     points = {p.attribValue("name"): p for p in geo.points()}
@@ -367,31 +413,29 @@ def soma_pose(node, frame, model_joints, model_parents, root_joint: str = "Root"
             "Skeleton is missing %d SOMA joints (%s...)" % (len(missing), missing[0]))
 
     world = {}
-    for name in list(model_joints) + [root_joint]:
-        if name not in points:
-            continue
+    for name in model_joints:
         m = hou.Matrix3(points[name].attribValue("transform")).transposed()
         cols = [hou.Vector3(m.at(0, c), m.at(1, c), m.at(2, c)).normalized() for c in range(3)]
         world[name] = [[cols[c][r] for c in range(3)] for r in range(3)]
 
+    positions = [list(points[name].position()) for name in model_joints]
+
     identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-    local_rot, positions = [], []
+    local_rot = []
     for i, name in enumerate(model_joints):
         parent = model_parents[i]
-        pname = root_joint if parent < 0 else model_joints[parent]
         R = world[name]
-        P = world.get(pname, identity)
+        P = identity if parent < 0 else world[model_joints[parent]]
         # local = parent^T * world, column-vector convention
         loc = [[sum(P[k][r] * R[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
         local_rot.append([v for row in loc for v in row])
-        positions.append(list(points[name].position()))
 
     root = list(points[model_joints[0]].position())
     return local_rot, root, positions
 
 
 def sample_guide_poses(frames, node=None, rig_map: str = "soma_mixamo",
-                       start_frame=None):
+                       start_frame=None, source_skeleton=None):
     """Sample the SOMA guide poses for ``frames`` (Houdini frame numbers).
 
     Returns a list of :class:`pipeline.kimodo.constraints.GuidePose`.  ``node``
@@ -408,7 +452,8 @@ def sample_guide_poses(frames, node=None, rig_map: str = "soma_mixamo",
         geo = hou.node("/obj").node(GUIDE_CONTAINER)
         node = geo.node(GUIDE_OUT) if geo else None
         if node is None:
-            node = build_reverse_retarget(rig_map=rig_map)
+            node = build_reverse_retarget(rig_map=rig_map,
+                                          source_skeleton=source_skeleton)
 
     if start_frame is None:
         start_frame = int(hou.playbar.frameRange()[0])
@@ -426,7 +471,7 @@ def sample_guide_poses(frames, node=None, rig_map: str = "soma_mixamo",
 
 
 def prepare_guide_constraints(stem: str, frames, rig_map: str = "soma_mixamo",
-                              source_skeleton: str = DEFAULT_GUIDE_SOURCE,
+                              source_skeleton: str = None,
                               start_frame=None, end_frame=None, node=None) -> dict:
     """Hero frames -> a Kimodo constraints file, ready to generate against.
 
@@ -440,17 +485,26 @@ def prepare_guide_constraints(stem: str, frames, rig_map: str = "soma_mixamo",
     from . import constraints as guides
     from . import retarget as rigmaps
 
+    source_skeleton = source_skeleton or guide_source_default()
+    scene_start, scene_end = (int(round(v)) for v in hou.playbar.frameRange())
     if start_frame is None:
-        start_frame = int(round(hou.playbar.frameRange()[0]))
-    if end_frame is None:
-        end_frame = int(round(hou.playbar.frameRange()[1]))
-    start_frame, end_frame = int(start_frame), int(end_frame)
+        start_frame = scene_start
+    start_frame = int(start_frame)
 
+    # Guide frames must exist in the scene, but the clip only has to run from the
+    # start frame to the last hero pose — deriving the end from the scene range
+    # would make a 12 s clip out of a 40-frame blocking.
     if isinstance(frames, str):
-        frames = guides.parse_guide_frames(frames, start_frame, end_frame)
+        frames = guides.parse_guide_frames(frames, scene_start, scene_end)
     else:
         frames = guides.parse_guide_frames(
-            ",".join(str(int(f)) for f in frames), start_frame, end_frame)
+            ",".join(str(int(f)) for f in frames), scene_start, scene_end)
+    if end_frame is None:
+        end_frame = max(frames)
+    end_frame = int(end_frame)
+    if end_frame < max(frames):
+        raise hou.OperationFailed(
+            "Clip ends on frame %d, before guide frame %d." % (end_frame, max(frames)))
 
     fps = float(hou.fps())
     duration = guides.duration_for_range(start_frame, end_frame, fps)
@@ -460,7 +514,8 @@ def prepare_guide_constraints(stem: str, frames, rig_map: str = "soma_mixamo",
             % (duration, fps, max(frames)))
 
     poses = sample_guide_poses(frames, node=node, rig_map=rig_map,
-                               start_frame=start_frame)
+                               start_frame=start_frame,
+                               source_skeleton=source_skeleton)
 
     data = rigmaps.load_rig_map(rig_map)
     joint_names = data["source"]["model_joints"]
