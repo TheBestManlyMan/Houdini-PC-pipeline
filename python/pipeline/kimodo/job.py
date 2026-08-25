@@ -39,6 +39,8 @@ class KimodoJob(QtCore.QObject):
         self._stage = None
         self._t0 = None
         self._cancelled = False
+        self._constraints = None
+        self._meta = {}
         self.stem = None
         self.npz = None
         self.bvh = None
@@ -49,8 +51,14 @@ class KimodoJob(QtCore.QObject):
                 and self._proc.state() != QtCore.QProcess.NotRunning)
 
     def start(self, prompt: str, duration: float = 4.0, steps: int = 30,
-              seed=None, name: str = "", model: str = ""):
-        """Kick off generation. Returns False if it could not start."""
+              seed=None, name: str = "", model: str = "", constraints=None,
+              meta=None):
+        """Kick off generation. Returns False if it could not start.
+
+        ``constraints`` is a Kimodo constraints file (hero guide poses);
+        ``meta`` is merged into the clip's sidecar so a guided generation
+        records the frames it came from.
+        """
         if self.is_running():
             self._emit("Already generating.")
             return False
@@ -74,6 +82,8 @@ class KimodoJob(QtCore.QObject):
         self._steps = int(steps)
         self._seed = seed
         self._model = model
+        self._constraints = constraints
+        self._meta = dict(meta or {})
         self._cancelled = False
         self._t0 = time.time()
 
@@ -81,9 +91,11 @@ class KimodoJob(QtCore.QObject):
                    % (prompt, self._duration, self._steps,
                       "random" if seed is None or int(seed) < 0 else seed))
         self._emit("-> %s" % self.bvh)
+        if constraints:
+            self._emit("Guided by %s" % constraints)
         self._run("generate", runner.gen_command(
             prompt, self.npz.with_suffix(""), duration=self._duration,
-            steps=self._steps, seed=seed, model=model))
+            steps=self._steps, seed=seed, model=model, constraints=constraints))
         return True
 
     def cancel(self):
@@ -137,8 +149,12 @@ class KimodoJob(QtCore.QObject):
             return
 
         frames = clips.bvh_frame_count(self.bvh)
+        meta = dict(self._meta)
+        if self._constraints:
+            import os
+            meta["constraints"] = os.path.basename(str(self._constraints))
         clips.write_meta(self.stem, self._prompt, self._duration, self._steps,
-                         seed=self._seed, model=self._model, frames=frames)
+                         seed=self._seed, model=self._model, frames=frames, **meta)
         self._emit("Done in %s — %s frames @ %g fps."
                    % (self._elapsed(), frames, clips.bvh_fps(self.bvh)))
         self.stage.emit("done")

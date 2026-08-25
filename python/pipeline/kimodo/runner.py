@@ -27,12 +27,16 @@ class KimodoError(RuntimeError):
 
 def gen_command(prompt: str, output_stem, duration: float = 4.0, steps: int = 30,
                 seed=None, num_samples: int = 1, model: str = "",
-                bvh: bool = False, standard_tpose: bool = True) -> list:
+                bvh: bool = False, standard_tpose: bool = True,
+                constraints=None) -> list:
     """argv for ``kimodo_gen``.
 
     ``output_stem`` is a path without extension; kimodo appends ``.npz`` (and
     ``.bvh`` when ``bvh`` is set).  We normally leave ``bvh`` off and convert in
     a second step so the exported BVH can be re-made without re-generating.
+
+    ``constraints`` is a Kimodo constraints file — hero poses the generated
+    motion has to pass through.
     """
     cmd = [
         str(config.gen_executable()),
@@ -48,6 +52,10 @@ def gen_command(prompt: str, output_stem, duration: float = 4.0, steps: int = 30
     name = model or config.model()
     if name:
         cmd += ["--model", name]
+    if constraints:
+        # Verified against kimodo_gen --help: --constraints takes a saved
+        # constraint list (the JSON pipeline.kimodo.constraints writes).
+        cmd += ["--constraints", str(constraints)]
     if bvh:
         cmd += ["--bvh"]
         if standard_tpose:
@@ -117,7 +125,8 @@ def run(cmd, on_output=None, timeout=None, check: bool = True) -> int:
 
 
 def generate_clip(prompt: str, stem: str, duration: float = 4.0, steps: int = 30,
-                  seed=None, model: str = "", on_output=None, timeout=None):
+                  seed=None, model: str = "", on_output=None, timeout=None,
+                  constraints=None):
     """Blocking prompt -> BVH: generate the NPZ, convert it, write the sidecar.
 
     Returns the BVH path.  The clip library layout is owned by
@@ -130,7 +139,7 @@ def generate_clip(prompt: str, stem: str, duration: float = 4.0, steps: int = 30
     bvh = clips.bvh_path(stem, root)
 
     run(gen_command(prompt, npz.with_suffix(""), duration=duration, steps=steps,
-                    seed=seed, model=model),
+                    seed=seed, model=model, constraints=constraints),
         on_output=on_output, timeout=timeout)
     if not npz.is_file():
         raise KimodoError("kimodo_gen finished but %s was not written" % npz)
@@ -140,5 +149,6 @@ def generate_clip(prompt: str, stem: str, duration: float = 4.0, steps: int = 30
         raise KimodoError("kimodo_convert finished but %s was not written" % bvh)
 
     clips.write_meta(stem, prompt, duration, steps, seed=seed, model=model,
-                     root=root, frames=clips.bvh_frame_count(bvh))
+                     root=root, frames=clips.bvh_frame_count(bvh),
+                     constraints=(Path(constraints).name if constraints else None))
     return bvh

@@ -14,7 +14,7 @@ try:
 except ImportError:  # older builds
     from PySide2 import QtCore, QtWidgets
 
-from pipeline.kimodo import clips, config, scene
+from pipeline.kimodo import clips, config, constraints, scene
 from pipeline.kimodo.job import KimodoJob
 
 
@@ -56,6 +56,13 @@ class KimodoPanel(QtWidgets.QWidget):
         self.seed.setToolTip("-1 generates a random seed. Fixed seeds reproduce a clip.")
         form.addRow("Seed", self.seed)
 
+        self.guide_frames = QtWidgets.QLineEdit()
+        self.guide_frames.setPlaceholderText("1, 12, 26, 40   (hero poses on the Mixamo rig)")
+        self.guide_frames.setToolTip(
+            "Frames you have posed on the Mixamo soldier. Kimodo generates the "
+            "motion between them. Duration is derived from the scene frame range.")
+        form.addRow("Guide Frames", self.guide_frames)
+
         self.clipname = QtWidgets.QLineEdit()
         self.clipname.setPlaceholderText("auto (from prompt)")
         form.addRow("Clip name", self.clipname)
@@ -67,10 +74,13 @@ class KimodoPanel(QtWidgets.QWidget):
         btns = QtWidgets.QHBoxLayout()
         self.gen_btn = QtWidgets.QPushButton("Generate Animation")
         self.gen_btn.clicked.connect(self.generate)
+        self.guide_btn = QtWidgets.QPushButton("Generate From Guide Frames")
+        self.guide_btn.clicked.connect(self.generate_from_guide_frames)
         self.cancel_btn = QtWidgets.QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.cancel)
         self.cancel_btn.setEnabled(False)
         btns.addWidget(self.gen_btn)
+        btns.addWidget(self.guide_btn)
         btns.addWidget(self.cancel_btn)
 
         self.status = QtWidgets.QLabel("Idle")
@@ -94,6 +104,7 @@ class KimodoPanel(QtWidgets.QWidget):
             for line in problems:
                 self._log(line)
             self.gen_btn.setEnabled(False)
+            self.guide_btn.setEnabled(False)
         else:
             self._log("Kimodo: %s" % config.install_root())
             self._log("Clips:  %s" % config.clips_root())
@@ -109,6 +120,39 @@ class KimodoPanel(QtWidgets.QWidget):
 
     # ---------------------------------------------------------- generate
     def generate(self):
+        """Text-only generation."""
+        self._launch(duration=self.duration.value())
+
+    def generate_from_guide_frames(self):
+        """Generation guided by hero poses keyed on the Mixamo soldier."""
+        if self._job is not None and self._job.is_running():
+            return
+        stem = self._reserve_stem()
+        try:
+            prepared = scene.prepare_guide_constraints(
+                stem, self.guide_frames.text())
+        except Exception as exc:   # bad frames, missing rig, missing import network
+            self._log("Guide frames: %s" % exc)
+            self._set_status("Guide frames rejected", error=True)
+            return
+
+        self._log("Guide frames %s -> Kimodo indices %s" % (
+            prepared["guide_frames"], prepared["kimodo_frames"]))
+        self._log("Frame range %d-%d @ %g fps -> duration %.2fs" % (
+            prepared["houdini_start_frame"], prepared["houdini_end_frame"],
+            prepared["fps"], prepared["duration"]))
+        self._log("Constraints: %s" % prepared["constraints"])
+        self._launch(duration=prepared["duration"], stem=stem,
+                     constraints=prepared["constraints"],
+                     meta={k: prepared[k] for k in (
+                         "guide_frames", "kimodo_frames", "houdini_start_frame",
+                         "houdini_end_frame", "source_skeleton", "rig_map")})
+
+    def _reserve_stem(self):
+        text = self.clipname.text().strip() or self.prompt.toPlainText().strip()
+        return clips.unique_stem(text or "clip", clips.ensure_clips_root())
+
+    def _launch(self, duration, stem=None, constraints=None, meta=None):
         if self._job is not None and self._job.is_running():
             return
 
@@ -121,13 +165,16 @@ class KimodoPanel(QtWidgets.QWidget):
         seed = self.seed.value()
         started = job.start(
             self.prompt.toPlainText(),
-            duration=self.duration.value(),
+            duration=duration,
             steps=self.steps.value(),
             seed=None if seed < 0 else seed,
-            name=self.clipname.text().strip(),
+            name=stem or self.clipname.text().strip(),
+            constraints=constraints,
+            meta=meta,
         )
         if started:
             self.gen_btn.setEnabled(False)
+            self.guide_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
 
     def cancel(self):
@@ -144,6 +191,7 @@ class KimodoPanel(QtWidgets.QWidget):
 
     def _on_finished(self, ok, payload):
         self.gen_btn.setEnabled(True)
+        self.guide_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         if not ok:
             return

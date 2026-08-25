@@ -190,6 +190,75 @@ Known gap: the upper arms still read ~30° off, because the SOMA and Mixamo
 clavicle/shoulder orientations differ. Hands — what the Phase 5 spear grip needs
 — are within ~10°, so this is parked rather than solved.
 
+## Hero keyframes -> Kimodo inbetweening
+
+Pose the Mixamo soldier on a few frames, type those frame numbers, and Kimodo
+generates the motion between them.
+
+```
+Prompt        A disciplined soldier raises his spear...
+Guide Frames  1, 12, 26, 40
+[ Generate From Guide Frames ]
+```
+
+```
+Mixamo hero poses -> /obj/kimodo_guide (reverse retarget) -> SOMA poses
+  -> {stem}_constraints.json -> kimodo_gen --constraints -> NPZ -> BVH
+  -> /obj/kimodo_import -> /obj/kimodo_retarget -> Mixamo
+```
+
+The animator types the frames; keyframes are **not** auto-detected (partially
+keyed controls and IK channels make that ambiguous). Parsing lives in
+`pipeline.kimodo.constraints`, not in the UI: whitespace is ignored, duplicates
+collapse, the list is sorted, non-integers and out-of-range frames are
+rejected, and at least two distinct frames are required.
+
+**Frame numbers.** Kimodo indices are 0-based from the start of the clip:
+`kimodo_frame = houdini_frame - start_frame`. The start frame is the scene's,
+not a hardcoded 1. Duration is derived from the Houdini frame range
+(`(end - start + 1) / fps`) rather than typed, so it can never stop short of the
+last hero pose — `covers_frames()` re-checks that before launching.
+
+**The constraint format** (verified against Kimodo's own
+`assets/demo/examples/kimodo-soma-rp/03_full_body_keyframes/constraints.json`
+and `FullBodyConstraintSet.from_dict`):
+
+```json
+[{"type": "fullbody",
+  "frame_indices":    [0, 11, 25, 39],
+  "local_joints_rot": [[[ax, ay, az], ... 77 joints], ...],
+  "root_positions":   [[x, y, z], ...]}]
+```
+
+`local_joints_rot` is axis-angle per joint in `SOMASkeleton77.bone_order_names`
+order (recorded in the rig map as `source.model_joints`). `smooth_root_2d` is
+optional and omitted, so Kimodo derives it from the root itself.
+
+**Why no torch is needed to author constraints.** A standard-T-pose SOMA BVH's
+local rotations *are* Kimodo's `local_rot_mats` — checked against a generated
+clip, max difference 3.5e-6 — so the rotations read off the Houdini skeleton go
+straight into the file with no rest conversion. The BVH's `Root` wrapper always
+carries an identity rotation and is not a model joint; `root_positions` is the
+world position of `Hips` in metres.
+
+Kimodo's own reader is the check on our writer:
+
+```bash
+~/Projects/kimodo/.venv/bin/python     python/pipeline/kimodo/scripts/verify_constraints.py     {clip}_constraints.json --poses {clip}_guide_poses.json
+```
+
+It runs `load_constraints_lst` (which forward-kinematics the stored rotations)
+and compares against the joint positions Houdini recorded.
+
+**Files per guided clip** — the NPZ stays the master:
+
+```
+{stem}.npz  {stem}.bvh  {stem}.json  {stem}_constraints.json  {stem}_guide_poses.json
+```
+
+The sidecar records prompt, seed, steps, fps, the Houdini frame range, the guide
+frames, their Kimodo indices, the source skeleton and the constraints filename.
+
 ## Troubleshooting
 
 | Symptom | Cause |

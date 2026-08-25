@@ -240,3 +240,249 @@ def _level_bones(pose, mapping, bones):
         pose.parm("r%dx" % i).set(-20.0)
         slope = (elevation(joint, child) - base) / -20.0
         pose.parm("r%dx" % i).set(-base / slope if abs(slope) > 1e-6 else 0.0)
+
+
+# ------------------------------------------------- reverse retarget (guide poses)
+# Mixamo hero poses -> SOMA, so a few keyed frames can be handed to Kimodo as
+# full-body constraints.  Mirror image of build_retarget(): there the Mixamo rig
+# is the target and needs a T-posed rest; here it is the *source*, so the T-pose
+# goes on the source side and SOMA (already a T-pose) is the target.
+#
+#   SRC_MIXAMO ─ SRC_SCALE ─────────────┐
+#                                       ├─ SRC_STASH ─┐
+#   SRC_REST ─ SRC_TPOSE ─ SRC_SCALE_REST┘             │
+#                                                      │
+#   TGT_SOMA_REST ─ TGT_STASH ─ MAP ──────────────────┴─ FBIK ─ OUT_GUIDE
+
+GUIDE_CONTAINER = "kimodo_guide"
+GUIDE_OUT = "OUT_GUIDE"
+DEFAULT_GUIDE_SOURCE = "/obj/Soldier_Rig/Animated_Pose"
+
+
+def build_reverse_retarget(source_skeleton: str = DEFAULT_GUIDE_SOURCE,
+                           source_rest: str = DEFAULT_TARGET_SKELETON,
+                           rig_map: str = "soma_mixamo",
+                           container: str = GUIDE_CONTAINER,
+                           scale_source: bool = True) -> hou.Node:
+    """Build (or refresh) the Mixamo -> SOMA network. Returns its OUT null.
+
+    ``source_skeleton`` is the *animated* Mixamo skeleton the animator poses;
+    ``source_rest`` its capture pose.  The SOMA side comes from the import
+    network's rest branch, so a clip must have been imported first.
+    """
+    from . import retarget as rigmaps
+
+    data = rigmaps.load_rig_map(rig_map)
+    imported = import_network(create=False)
+    if imported is None:
+        raise hou.OperationFailed(
+            "No %s network — import a clip first, the SOMA rest comes from it." % CONTAINER)
+    for path in (source_skeleton, source_rest):
+        if hou.node(path) is None:
+            raise hou.OperationFailed("Skeleton not found: %s" % path)
+
+    geo = hou.node("/obj").node(container) or hou.node("/obj").createNode("geo", container)
+
+    def node(kind, name):
+        return geo.node(name) or geo.createNode(kind, name)
+
+    src_anim = node("object_merge", "SRC_MIXAMO")
+    src_anim.parm("objpath1").set(source_skeleton)
+    src_rest = node("object_merge", "SRC_REST")
+    src_rest.parm("objpath1").set(source_rest)
+    tgt_rest = node("object_merge", "TGT_SOMA_REST")
+    tgt_rest.parm("objpath1").set(imported.path() + "/" + OUT_REST_NODE)
+
+    # --- Mixamo A-pose -> T-pose, so it agrees with SOMA's rest
+    pose = node("kinefx::rigpose", "SRC_TPOSE")
+    pose.setInput(0, src_rest)
+    pose.parm("worldspace").set(0)
+    _level_bones(pose, src_rest, data["target"]["tpose_level_bones"])
+
+    # --- size match: shrink the Mixamo rig to SOMA's proportions (inverse of forward)
+    scale = 1.0
+    if scale_source:
+        scale = 1.0 / _leg_ratio(tgt_rest, src_rest, data["scale"])
+    scale_anim = node("xform", "SRC_SCALE"); scale_anim.setInput(0, src_anim)
+    scale_rest = node("xform", "SRC_SCALE_REST"); scale_rest.setInput(0, pose)
+    for n in (scale_anim, scale_rest):
+        n.parmTuple("s").set((scale, scale, scale))
+
+    stash = node("kinefx::rigstashpose", "SRC_STASH")
+    stash.setInput(0, scale_anim); stash.setInput(1, scale_rest)
+    stash.parm("mode").set("store")
+    stash.parm("attrib_name").set("rest_transform")
+    stash.parm("matchbyattribute").set(1)
+    stash.parm("attributetomatch").set("name")
+
+    # --- SOMA is its own rest (the standard T-pose out of the BVH)
+    tgt_stash = node("kinefx::rigstashpose", "TGT_STASH")
+    tgt_stash.setInput(0, tgt_rest); tgt_stash.setInput(1, tgt_rest)
+    tgt_stash.parm("mode").set("store")
+    tgt_stash.parm("attrib_name").set("rest_transform")
+
+    # --- correspondence, target(SOMA) <- source(Mixamo): the same map, read the other way
+    mapping = node("kinefx::mappoints", "MAP")
+    mapping.setInput(0, tgt_stash); mapping.setInput(1, stash)
+    mapping.parm("reftype").set("attribvalue")
+    mapping.parm("referenceattrib").set("name")
+    pairs = sorted(data["joint_map"].items())
+    mapping.parm("mappings").set(len(pairs))
+    for i, (soma, mixamo) in enumerate(pairs):
+        mapping.parm("from%d" % i).set('@name="%s"' % soma)
+        mapping.parm("to%d" % i).set('@name="%s"' % mixamo)
+
+    fbik = node("kinefx::fullbodyik", "FBIK")
+    fbik.setInput(0, mapping); fbik.setInput(1, stash)
+    fbik.parm("mapusing").set("mappingattrib")
+    fbik.parm("computeoffsets").set(1)
+    fbik.parm("userestpose").set(1)
+    fbik.parm("restposeattrib").set("rest_transform")
+
+    out = node("null", GUIDE_OUT)
+    out.setInput(0, fbik)
+    out.setDisplayFlag(True)
+    out.setRenderFlag(True)
+    geo.layoutChildren()
+    return out
+
+
+# --------------------------------------------------------------- pose sampling
+
+def soma_pose(node, frame, model_joints, model_parents, root_joint: str = "Root"):
+    """Read one SOMA pose off a KineFX skeleton.
+
+    Returns ``(local_rot, root_position, positions)`` where ``local_rot`` holds a
+    flat row-major 3x3 per joint in *column-vector* convention — the same numbers
+    a standard-T-pose SOMA BVH carries, which is what Kimodo stores as
+    ``local_rot_mats``.  Houdini's point ``transform`` is row-vector and carries
+    the import scale, so it is transposed and orthonormalised first.
+    """
+    geo = node.geometryAtFrame(frame)
+    points = {p.attribValue("name"): p for p in geo.points()}
+
+    missing = [j for j in model_joints if j not in points]
+    if missing:
+        raise hou.OperationFailed(
+            "Skeleton is missing %d SOMA joints (%s...)" % (len(missing), missing[0]))
+
+    world = {}
+    for name in list(model_joints) + [root_joint]:
+        if name not in points:
+            continue
+        m = hou.Matrix3(points[name].attribValue("transform")).transposed()
+        cols = [hou.Vector3(m.at(0, c), m.at(1, c), m.at(2, c)).normalized() for c in range(3)]
+        world[name] = [[cols[c][r] for c in range(3)] for r in range(3)]
+
+    identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    local_rot, positions = [], []
+    for i, name in enumerate(model_joints):
+        parent = model_parents[i]
+        pname = root_joint if parent < 0 else model_joints[parent]
+        R = world[name]
+        P = world.get(pname, identity)
+        # local = parent^T * world, column-vector convention
+        loc = [[sum(P[k][r] * R[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
+        local_rot.append([v for row in loc for v in row])
+        positions.append(list(points[name].position()))
+
+    root = list(points[model_joints[0]].position())
+    return local_rot, root, positions
+
+
+def sample_guide_poses(frames, node=None, rig_map: str = "soma_mixamo",
+                       start_frame=None):
+    """Sample the SOMA guide poses for ``frames`` (Houdini frame numbers).
+
+    Returns a list of :class:`pipeline.kimodo.constraints.GuidePose`.  ``node``
+    defaults to the reverse-retarget output, built if it does not exist yet.
+    """
+    from . import constraints as guides
+    from . import retarget as rigmaps
+
+    data = rigmaps.load_rig_map(rig_map)
+    model_joints = data["source"]["model_joints"]
+    model_parents = data["source"]["model_parents"]
+
+    if node is None:
+        geo = hou.node("/obj").node(GUIDE_CONTAINER)
+        node = geo.node(GUIDE_OUT) if geo else None
+        if node is None:
+            node = build_reverse_retarget(rig_map=rig_map)
+
+    if start_frame is None:
+        start_frame = int(hou.playbar.frameRange()[0])
+
+    poses = []
+    for frame in frames:
+        local_rot, root, positions = soma_pose(node, frame, model_joints, model_parents)
+        poses.append(guides.GuidePose(
+            houdini_frame=int(frame),
+            kimodo_frame=guides.to_kimodo_frame(frame, start_frame),
+            root_position=root,
+            local_rot=local_rot,
+            positions=positions))
+    return poses
+
+
+def prepare_guide_constraints(stem: str, frames, rig_map: str = "soma_mixamo",
+                              source_skeleton: str = DEFAULT_GUIDE_SOURCE,
+                              start_frame=None, end_frame=None, node=None) -> dict:
+    """Hero frames -> a Kimodo constraints file, ready to generate against.
+
+    ``frames`` is either the raw text the animator typed or a list of frame
+    numbers.  The clip duration is derived from the Houdini frame range rather
+    than asked for, so it can never stop short of the last hero pose.
+
+    Returns everything the caller needs to launch and to record the run.
+    """
+    from . import clips as cliplib
+    from . import constraints as guides
+    from . import retarget as rigmaps
+
+    if start_frame is None:
+        start_frame = int(round(hou.playbar.frameRange()[0]))
+    if end_frame is None:
+        end_frame = int(round(hou.playbar.frameRange()[1]))
+    start_frame, end_frame = int(start_frame), int(end_frame)
+
+    if isinstance(frames, str):
+        frames = guides.parse_guide_frames(frames, start_frame, end_frame)
+    else:
+        frames = guides.parse_guide_frames(
+            ",".join(str(int(f)) for f in frames), start_frame, end_frame)
+
+    fps = float(hou.fps())
+    duration = guides.duration_for_range(start_frame, end_frame, fps)
+    if not guides.covers_frames(frames, start_frame, duration, fps):
+        raise hou.OperationFailed(
+            "A %.2fs clip at %g fps does not reach guide frame %d."
+            % (duration, fps, max(frames)))
+
+    poses = sample_guide_poses(frames, node=node, rig_map=rig_map,
+                               start_frame=start_frame)
+
+    data = rigmaps.load_rig_map(rig_map)
+    joint_names = data["source"]["model_joints"]
+    root = cliplib.ensure_clips_root()
+    guide_path = guides.write_guide_poses(
+        guides.guide_poses_path(stem, root), poses, joint_names, fps,
+        houdini_start_frame=start_frame, houdini_end_frame=end_frame,
+        source_skeleton=source_skeleton, rig_map=rig_map)
+    constraints_path = guides.write_constraints(
+        guides.constraints_json_path(stem, root), poses,
+        joint_count=len(joint_names))
+
+    return {
+        "stem": stem,
+        "guide_frames": frames,
+        "kimodo_frames": [p.kimodo_frame for p in poses],
+        "constraints": constraints_path,
+        "guide_poses": guide_path,
+        "duration": duration,
+        "fps": fps,
+        "houdini_start_frame": start_frame,
+        "houdini_end_frame": end_frame,
+        "source_skeleton": source_skeleton,
+        "rig_map": rig_map,
+    }

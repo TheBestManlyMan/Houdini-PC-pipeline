@@ -240,3 +240,164 @@ def test_validate_catches_unknown_tpose_joint():
     from pipeline.kimodo import retarget
     issues = retarget.validate(target_joints=["mixamorig:Hips"])
     assert any("tpose_level_bones joint not in skeleton" in i for i in issues)
+
+
+# ----------------------------------------------------------------- constraints
+
+def _rot(axis, radians):
+    """Column-vector rotation matrix, flat row-major — the constraint convention."""
+    import math
+    c, s = math.cos(radians), math.sin(radians)
+    if axis == "x":
+        return [1, 0, 0, 0, c, -s, 0, s, c]
+    if axis == "y":
+        return [c, 0, s, 0, 1, 0, -s, 0, c]
+    return [c, -s, 0, s, c, 0, 0, 0, 1]
+
+
+def _pose(houdini_frame, kimodo_frame, joints=77, angle=0.3):
+    from pipeline.kimodo.constraints import GuidePose
+    return GuidePose(houdini_frame, kimodo_frame, [0.0, 0.95, 0.0],
+                     [_rot("y", angle)] * joints)
+
+
+def test_parse_guide_frames_basic():
+    from pipeline.kimodo.constraints import parse_guide_frames
+    assert parse_guide_frames("1, 12, 26, 40") == [1, 12, 26, 40]
+
+
+def test_parse_guide_frames_normalises():
+    from pipeline.kimodo.constraints import parse_guide_frames
+    assert parse_guide_frames("  40,1,12 ,26, 12  ") == [1, 12, 26, 40]
+    assert parse_guide_frames("1;12;26") == [1, 12, 26]
+
+
+def test_parse_guide_frames_rejects_junk():
+    from pipeline.kimodo.constraints import GuideFrameError, parse_guide_frames
+    for bad in ("", None, "   ", "1, x, 3", "1.5, 3", "1"):
+        with pytest.raises(GuideFrameError):
+            parse_guide_frames(bad)
+
+
+def test_parse_guide_frames_enforces_range():
+    from pipeline.kimodo.constraints import GuideFrameError, parse_guide_frames
+    assert parse_guide_frames("1, 40", 1, 40) == [1, 40]
+    with pytest.raises(GuideFrameError) as exc:
+        parse_guide_frames("1, 41", 1, 40)
+    assert "41" in str(exc.value)
+    with pytest.raises(GuideFrameError):
+        parse_guide_frames("0, 20", 1, 40)
+
+
+def test_frame_conversion_is_relative_to_start():
+    from pipeline.kimodo import constraints as C
+    assert C.to_kimodo_frames([1, 12, 26, 40], 1) == [0, 11, 25, 39]
+    assert C.to_kimodo_frames([101, 112], 101) == [0, 11]   # not hardcoded to 1
+    assert C.to_kimodo_frame(0, 0) == 0
+
+
+def test_duration_covers_the_whole_range():
+    from pipeline.kimodo import constraints as C
+    assert C.duration_for_range(1, 40, 30) == pytest.approx(40 / 30.0)
+    assert C.duration_for_range(1, 1, 30) == pytest.approx(1 / 30.0)
+    with pytest.raises(C.GuideFrameError):
+        C.duration_for_range(10, 1, 30)
+
+
+def test_covers_frames_catches_a_short_clip():
+    from pipeline.kimodo import constraints as C
+    assert C.covers_frames([1, 40], 1, C.duration_for_range(1, 40, 30), 30)
+    assert not C.covers_frames([1, 40], 1, 1.0, 30)    # 30 frames < guide frame 40
+
+
+def test_axis_angle_matches_rotation():
+    import math
+    from pipeline.kimodo.constraints import matrix_to_axis_angle
+    assert matrix_to_axis_angle([1, 0, 0, 0, 1, 0, 0, 0, 1]) == [0.0, 0.0, 0.0]
+    aa = matrix_to_axis_angle(_rot("y", 0.7))
+    assert aa == pytest.approx([0.0, 0.7, 0.0], abs=1e-9)
+    aa = matrix_to_axis_angle(_rot("z", -1.2))
+    assert aa == pytest.approx([0.0, 0.0, -1.2], abs=1e-9)
+    aa = matrix_to_axis_angle(_rot("x", math.pi))     # the degenerate case
+    assert abs(aa[0]) == pytest.approx(math.pi, abs=1e-6)
+
+
+def test_constraint_payload_shape():
+    from pipeline.kimodo import constraints as C
+    poses = [_pose(1, 0), _pose(26, 25), _pose(12, 11)]
+    payload = C.build_constraint_payload(poses, joint_count=77)
+    assert len(payload) == 1
+    entry = payload[0]
+    assert entry["type"] == "fullbody"
+    assert entry["frame_indices"] == [0, 11, 25]           # sorted by kimodo frame
+    assert len(entry["local_joints_rot"]) == 3
+    assert len(entry["local_joints_rot"][0]) == 77
+    assert len(entry["local_joints_rot"][0][0]) == 3       # axis-angle
+    assert len(entry["root_positions"]) == 3
+
+
+def test_constraint_payload_rejects_bad_input():
+    from pipeline.kimodo import constraints as C
+    with pytest.raises(C.GuideFrameError):
+        C.build_constraint_payload([_pose(1, 0)])                      # one pose
+    with pytest.raises(C.GuideFrameError):
+        C.build_constraint_payload([_pose(1, 0), _pose(12, 11, joints=30)])
+    with pytest.raises(C.GuideFrameError):
+        C.build_constraint_payload([_pose(1, 0), _pose(12, 11)], joint_count=30)
+
+
+def test_write_constraints_matches_kimodos_schema(tmp_path):
+    """Same keys and shapes as kimodo's own full-body keyframe example."""
+    from pipeline.kimodo import constraints as C
+    path = C.write_constraints(tmp_path / "clip_constraints.json",
+                               [_pose(1, 0), _pose(40, 39)], joint_count=77)
+    data = json.loads(path.read_text())
+    assert isinstance(data, list)
+    assert set(data[0]) == {"type", "frame_indices", "local_joints_rot", "root_positions"}
+    assert data[0]["frame_indices"] == [0, 39]
+
+
+def test_guide_pose_interchange_roundtrip(tmp_path):
+    from pipeline.kimodo import constraints as C
+    names = ["J%d" % i for i in range(77)]
+    poses = [_pose(1, 0), _pose(40, 39)]
+    path = C.write_guide_poses(tmp_path / "clip_guide_poses.json", poses, names, 30.0,
+                               houdini_start_frame=1, houdini_end_frame=40)
+    data = C.read_guide_poses(path)
+    assert data["rest"] == "standard_tpose"
+    assert data["fps"] == 30.0
+    assert data["houdini_start_frame"] == 1
+    assert [f["kimodo_frame"] for f in data["frames"]] == [0, 39]
+    assert len(data["frames"][0]["local_rot"]) == 77
+
+
+def test_write_guide_poses_validates(tmp_path):
+    from pipeline.kimodo import constraints as C
+    names = ["J%d" % i for i in range(77)]
+    with pytest.raises(C.GuideFrameError):        # joint count mismatch
+        C.write_guide_poses(tmp_path / "a.json", [_pose(1, 0), _pose(2, 1, joints=30)],
+                            names, 30.0)
+    with pytest.raises(C.GuideFrameError):        # duplicate kimodo frame
+        C.write_guide_poses(tmp_path / "b.json", [_pose(1, 0), _pose(2, 0)], names, 30.0)
+    with pytest.raises(C.GuideFrameError):        # guide frame before the clip start
+        C.write_guide_poses(tmp_path / "c.json", [_pose(1, -1), _pose(2, 1)], names, 30.0)
+
+
+def test_gen_command_passes_constraints():
+    from pipeline.kimodo import runner
+    cmd = runner.gen_command("a soldier raises his spear", "/clips/spear",
+                             constraints="/clips/spear_constraints.json")
+    assert cmd[cmd.index("--constraints") + 1] == "/clips/spear_constraints.json"
+    assert "--constraints" not in runner.gen_command("x", "/clips/x")
+
+
+def test_rig_map_carries_the_model_joint_order():
+    """Constraint files are indexed by kimodo's SOMASkeleton77 order."""
+    from pipeline.kimodo import retarget
+    data = retarget.load_rig_map()
+    model = data["source"]["model_joints"]
+    assert len(model) == 77
+    assert model[0] == "Hips"
+    assert data["source"]["joints"] == ["Root"] + model   # BVH = Root + model joints
+    assert len(data["source"]["model_parents"]) == 77
+    assert data["source"]["model_parents"][0] == -1
